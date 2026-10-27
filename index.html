@@ -676,24 +676,44 @@ function billsBetween(fromExcl, toIncl, type = 'expense') {
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
-function safeToSpend() {
-  const now = isoDate(today()), bal = balanceAt(now);
-  if (bal == null) return null;
-  const pi = payInfo(), pay = nextPayday(pi), bills = billsBetween(now, pay);
-  const due = round2(bills.reduce((a, b) => a + (+b.r.amount || 0), 0)), safe = round2(bal - due), days = Math.max(1, dayDiff(now, pay));
-  return { bal, pay, pi, bills, due, safe, days, perDay: round2(Math.max(0, safe) / days) };
+/* cash you can count on: bank balances from screenshots when they're recent, otherwise the app's own balance */
+const isCardAcct = x => x.kind ? x.kind === 'card' : (/card|neo|credit|ifnf|mastercard|visa|latitude/i.test(x.name || '') || (+x.balance || 0) < 0);
+function cashNow() {
+  const now = isoDate(today()), list = Object.values(config.accounts || {}).filter(x => !isCardAcct(x) && x.count !== false);
+  const fresh = list.filter(x => x.at && Date.now() - x.at < 36 * 3600000);
+  if (fresh.length && fresh.length === list.length) {
+    const v = round2(list.reduce((a, x) => a + (x.available != null ? +x.available : +x.balance || 0), 0));
+    return { v, src: 'bank', at: Math.min(...list.map(x => x.at)) };
+  }
+  const b = balanceAt(now); return b == null ? null : { v: b, src: 'app' };
+}
+/* walk forward day by day: bills out, base pay in, and find the lowest point */
+function forecast() {
+  const now = isoDate(today()), cash = cashNow(); if (!cash) return null;
+  const pi = payInfo(), p1 = nextPayday(pi), p2 = addDaysIso(p1, pi.freq === 'fortnightly' ? 14 : 7);
+  const end = [p2, addDaysIso(now, 14)].sort().pop();
+  const ev = billsBetween(now, end).map(b => ({ date: b.date, name: b.r.name, v: -(+b.r.amount || 0) }));
+  if (cash.src === 'bank') for (const t of txOf(now.slice(0, 7))) if (t.date === now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
+  if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) ev.push({ date: d, name: 'Base pay', v: pi.base, pay: true });
+  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.pay ? 1 : 0) - (b.pay ? 1 : 0));
+  let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
+  for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
+  const billsTotal = round2(-ev.filter(e => !e.pay).reduce((a, e) => a + e.v, 0));
+  return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, endBal: bal };
 }
 function viewSafe() {
-  const s = safeToSpend(); if (!s) return '';
-  const short = s.safe < 0;
+  const f = forecast(); if (!f) return '';
+  const short = f.low < 0, safe = Math.max(0, f.low), days = Math.max(1, dayDiff(isoDate(today()), f.end));
+  const src = f.cash.src === 'bank' ? `Your bank balances ${money(f.cash.v)} (available)` : `The app’s balance ${money(f.cash.v)}`;
   return `<section class="glass card" aria-label="Safe to spend">
-    <div class="row between"><div class="small muted" style="font-weight:600">Safe to spend until payday</div><button type="button" class="link" data-act="paysettings">Pay</button></div>
-    <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-s.safe) : money(s.safe)}</div>
-    <div class="row" style="flex-wrap:wrap"><span class="chip ${short ? 'over' : ''} num">${short ? `${money(-s.safe)} short before payday` : `About ${money(s.perDay)} a day`}</span>
-    <span class="small muted num">Payday ${esc(shortDay(s.pay))}${s.pi.base ? ' · about ' + money0(s.pi.base) : ''}</span></div>
-    <div class="small muted num">Balance ${money(s.bal)} minus ${s.bills.length} bill${s.bills.length === 1 ? '' : 's'} due first (${money(s.due)})</div>
-    ${s.bills.length ? `<div style="display:flex;flex-direction:column;gap:6px">${s.bills.slice(0, 5).map(b => `<div class="row between small"><span>${esc(b.r.name)}</span><span class="muted num">${money(b.r.amount)} · ${esc(prettyDay(b.date))}</span></div>`).join('')}${s.bills.length > 5 ? `<div class="tiny muted">and ${s.bills.length - 5} more</div>` : ''}</div>` : ''}
-    ${short ? '<div class="note" style="color:var(--over)">Your balance won’t cover the bills due before payday. Move money in or hold off spending to avoid overdraw fees.</div>' : ''}
+    <div class="row between"><div class="small muted" style="font-weight:600">Safe to spend until ${esc(shortDay(f.end))}</div><button type="button" class="link" data-act="paysettings">Pay</button></div>
+    <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-f.low) : money(safe)}</div>
+    <div class="row" style="flex-wrap:wrap"><span class="chip ${short ? 'over' : ''} num">${short ? `Runs out ${esc(shortDay(f.neg.date))}` : `About ${money(safe / days)} a day`}</span>
+    <span class="small muted num">Next pay ${esc(shortDay(f.p1))}${f.pi.base ? ' · ' + money0(f.pi.base) + ' base' : ''}</span></div>
+    ${short ? `<div class="note" style="color:var(--over)">Your money runs out on ${esc(shortDay(f.neg.date))} when ${esc(f.neg.name)} is due. At the lowest point, ${esc(shortDay(f.lowDate))}, you’re ${money(-f.low)} short. Base pay alone won’t cover these bills. Ask lenders to move dates, or plan where commission goes.</div>` : ''}
+    <div class="small muted num">${src}, plus base pay, minus ${money(f.billsTotal)} of bills over the next ${days} days. Commission is not counted.</div>
+    <details${short ? ' open' : ''}><summary class="small" style="cursor:pointer;font-weight:600">Day by day</summary>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">${f.ev.map(e => `<div class="row between small" style="gap:8px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortDay(e.date).replace(/,.*/, ''))} ${esc(shortDay(e.date).replace(/^[^,]*,\s*/, ''))} · ${esc(e.name)}</span><span class="num" style="color:${e.pay ? 'var(--accent)' : 'var(--muted)'}">${e.pay ? '+' : '−'}${money0(Math.abs(e.v))}</span><span class="num" style="width:76px;text-align:right;font-weight:700;color:${e.bal < 0 ? 'var(--over)' : 'var(--fg)'}">${e.bal < 0 ? '−' : ''}${money0(Math.abs(e.bal))}</span></div>`).join('') || '<div class="note">No bills or pay in this window.</div>'}</div></details>
   </section>`;
 }
 function openPaySettings() {
@@ -938,7 +958,7 @@ function parseBankShot(tsv, W, todayIso) {
   const full = allLines.map(l => l.text);
   for (let i = 0; i < full.length; i++) {
     const t = full[i];
-    let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{6}\s*(\d{4})\b/.exec(t); if (m && !acc.last4) acc.last4 = m[1];
+    let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{6}\s*(\d{4})\b/.exec(t) || /(?:ending(?:\s+in)?|card\s*(?:no\.?|number)?|xx|[\u2022*]{2,})\s*(\d{4})\b/i.exec(t); if (m && !acc.last4) acc.last4 = m[1];
     m = /^balance\s*(-?\$[\d,]+\.\d{2})/i.exec(t.replace(/\s+/g, ' ')); if (m && acc.balance == null) acc.balance = shotMoney(m[1]);
     m = /^pending\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.pending == null) acc.pending = shotMoney(m[1]);
     if (/^available(\s+(balance|credit))?$/i.test(t.trim()) && acc.available == null) { const n = (full[i + 1] || '').replace(/\s+/g, ''); if (SHOT_MONEY.test(n)) acc.available = shotMoney(n); }
@@ -1054,7 +1074,7 @@ function openShotImport(results) {
 async function runShotImport() {
   const ctx = sheetCtx, touched = new Set();
   config.accounts = config.accounts || {};
-  for (const a of ctx.accounts) { const k = a.last4 || a.name; config.accounts[k] = { ...(config.accounts[k] || {}), name: a.name || (config.accounts[k] || {}).name || 'Account', last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), at: Date.now() }; }
+  for (const a of ctx.accounts) { const k = a.last4 || a.name, old = config.accounts[k] || {}; config.accounts[k] = { ...old, name: old.nameSet ? old.name : (a.name || old.name || 'Account'), last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), at: Date.now() }; }
   const fresh = ctx.items.filter(t => !t.dup);
   for (const t of ctx.items) if (t.dup && t.clears) { const o = allTx().find(x => x.id === t.clears); if (o) { o.pending = false; touched.add(o.date.slice(0, 7)); } }
   if (fresh.length) {
@@ -1070,14 +1090,25 @@ async function runShotImport() {
   closeSheet(); render(); await saveMonths([...touched]); await saveConfig();
   toast(`${fresh.length ? `Added ${fresh.length} transactions` : 'No new transactions'}${ctx.accounts.length ? ', balances updated' : ''}`);
 }
+function openAcct(k) {
+  const x = (config.accounts || {})[k]; if (!x) return;
+  openSheet(`${sheetHead('Account')}
+  <div class="field"><label for="a-name">Name</label><input class="input" id="a-name" value="${esc(x.name || '')}"></div>
+  <div class="grid2"><div class="field"><label for="a-last4">Last 4 digits</label><input class="input num" id="a-last4" inputmode="numeric" maxlength="4" value="${esc(x.last4 || '')}"></div>
+  <div class="field"><label for="a-kind">Type</label><select class="input" id="a-kind">${[['bank', 'Bank account'], ['savings', 'Savings'], ['card', 'Credit card']].map(([v, l]) => `<option value="${v}" ${(x.kind || (isCardAcct(x) ? 'card' : 'bank')) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+  <label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="a-count" ${x.count !== false ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Count this money in Safe to spend</span></label>
+  <div class="note">Credit cards are never counted. The name you set here stays when you read new screenshots.</div>
+  <button type="button" class="btn primary block" data-act="acctsave">Save</button>
+  <button type="button" class="btn danger block" data-act="acctdel">Remove account</button>`, { kind: 'acct', k });
+}
 function viewAccounts() {
   const list = Object.values(config.accounts || {}); if (!list.length) return '';
-  const total = round2(list.reduce((a, x) => a + (+x.balance || 0), 0)), avail = round2(list.reduce((a, x) => a + (+x.available || 0), 0));
+  const cash = list.filter(x => !isCardAcct(x)), total = round2(cash.reduce((a, x) => a + (+x.balance || 0), 0)), avail = round2(cash.reduce((a, x) => a + (+x.available || 0), 0));
   const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   return `<section class="glass card" aria-label="Accounts">
     <div class="row between"><div class="h2">Accounts</div><button type="button" class="link" data-act="shots">Update</button></div>
-    ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div></div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
-    <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total</span><span class="num" style="font-weight:700">${money(total)}${avail ? ` <span class="muted">(${money(avail)} available)</span>` : ''}</span></div></section>`;
+    ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div></div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
+    <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total in bank accounts</span><span class="num" style="font-weight:700">${money(total)}${avail ? ` <span class="muted">(${money(avail)} available)</span>` : ''}</span></div></section>`;
 }
 
 /* trends: categories and stores this month against last month, and pay split into base and commission */
@@ -1957,6 +1988,9 @@ document.addEventListener('click', async e => {
     case 'debtdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.debts = config.debts.filter(d => d.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Debt deleted'); break;
     case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
     case 'shots': openShots(); break;
+    case 'acctedit': openAcct(el.dataset.k); break;
+    case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
+    case 'acctdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; } delete config.accounts[sheetCtx.k]; closeSheet(); render(); await saveConfig(); toast('Account removed'); break;
     case 'shotgo': runShotImport(); break;
     case 'billsimportgo': { const bs = sheetCtx.bills || [], rm = (sheetCtx.removals || []).map(n => n.toLowerCase()); config.recurring = config.recurring.filter(r => !rm.includes(r.name.toLowerCase())); for (const b of bs) { const ex = config.recurring.find(r => r.name.toLowerCase() === b.name.toLowerCase()); if (ex) { Object.assign(ex, b); delete ex.day; delete ex.start; } else config.recurring.push({ id: uid(), ...b, skip: [] }); } closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
     case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
