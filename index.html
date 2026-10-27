@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#071A24">
 <script>
 (function(){try{
-  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6'};
+  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6',concrete:'#D9DDDF'};
   var s=localStorage.getItem('lf-skin'); if(!SK[s]) s='lagoon';
   var q=new URLSearchParams(location.search).get('icon'); var ic=SK[q]?q:s;
   if(s!=='lagoon') document.documentElement.setAttribute('data-skin',s);
@@ -44,6 +44,19 @@
   --r-lg:28px; --r-md:22px; --r-sm:14px;
 }
 /* Colour themes, picked in More. Each one only changes tokens. */
+:root[data-skin="concrete"]{
+  color-scheme: light;
+  --bg:#D9DDDF; --bg-2:#EBEDEE; --fg:#21272C; --muted:#4D5862; --faint:#737E87;
+  --accent:#D6452A; --accent-ink:#FFFFFF; --accent-soft:rgba(214,69,42,.12);
+  --warn:#B45309; --warn-soft:rgba(180,83,9,.12); --over:#9F1239; --over-soft:rgba(159,18,57,.1);
+  --glass:rgba(255,255,255,.5); --glass-2:rgba(255,255,255,.78); --line:rgba(255,255,255,.7); --hi:rgba(255,255,255,.95);
+  --sheet:#E8EBEC; --sheet-bg:rgba(236,238,239,.94); --toast:rgba(38,44,50,.94); --nav:rgba(44,51,57,.78); --scrim:rgba(20,24,28,.32);
+  --divider:rgba(33,39,44,.09); --track:rgba(33,39,44,.12); --field:rgba(255,255,255,.7); --field-line:rgba(33,39,44,.16);
+  --grab:rgba(33,39,44,.22); --scan-line:rgba(214,69,42,.45); --shadow:rgba(30,38,44,.14);
+  --b1:#8E9FAC; --b2:#3F474F; --b3:#BAC3C9; --picker:none;
+}
+:root[data-skin="concrete"] nav.tabs{color:#E9ECEE}
+:root[data-skin="concrete"] #toast{color:#F1F3F4}
 :root[data-skin="ember"]{
   --bg:#1A0F1F; --bg-2:#2A1730; --fg:#FBF1F4; --muted:#D9BFCB; --faint:#9A7D8B;
   --accent:#FF9E7A; --accent-ink:#2A1018; --accent-soft:rgba(255,158,122,.16);
@@ -444,6 +457,31 @@ function txRow(t) {
     <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${src}</div></span>
     <span class="amt num ${t.type === 'income' ? 'in' : ''}">${sign}${money(t.amount)}</span></button></div>`;
 }
+/* tap a transaction: more from the same store, monthly average and all-time spend */
+function openTxDetail(t) {
+  const store = storeName(t.desc), all = allTx().filter(x => x.type === t.type && storeName(x.desc) === store).sort((a, b) => b.date.localeCompare(a.date));
+  const total = round2(all.reduce((a, x) => a + (+x.amount || 0), 0)), first = all.length ? all[all.length - 1].date.slice(0, 7) : mk(today());
+  const spanMonths = Math.max(1, monthDiff(first, mk(today())) + 1), cur = mk(today());
+  const last12keys = Array.from({ length: 12 }, (_, i) => addMonths(cur, i - 11)), byM = {};
+  for (const x of all) byM[x.date.slice(0, 7)] = (byM[x.date.slice(0, 7)] || 0) + (+x.amount || 0);
+  const last12 = round2(last12keys.reduce((a, k) => a + (byM[k] || 0), 0)), thisM = round2(byM[cur] || 0);
+  const cat6 = Array.from({ length: 6 }, (_, i) => addMonths(cur, i - 6)), catAvg = round2(cat6.reduce((a, k) => a + catActual(k, t.type, t.cat), 0) / 6);
+  const maxV = Math.max(1, ...last12keys.map(k => byM[k] || 0));
+  openSheet(`${sheetHead(store)}
+  <div class="row between"><div style="min-width:0"><div style="font-weight:700;overflow-wrap:anywhere">${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${t.pending ? ' · Pending' : ''}</div></div><div class="mid num" style="white-space:nowrap;color:${t.type === 'income' ? 'var(--accent)' : 'var(--fg)'}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</div></div>
+  <div class="grid2">
+    <div class="glass card" style="gap:2px;padding:12px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">Average a month</div><div class="mid num">${money0(total / spanMonths)}</div><div class="tiny muted">over ${spanMonths} month${spanMonths === 1 ? '' : 's'}</div></div>
+    <div class="glass card" style="gap:2px;padding:12px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">All time</div><div class="mid num">${money0(total)}</div><div class="tiny muted">${all.length} time${all.length === 1 ? '' : 's'} · ${money0(total / Math.max(1, all.length))} each</div></div>
+    <div class="glass card" style="gap:2px;padding:12px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">This month</div><div class="mid num">${money0(thisM)}</div><div class="tiny muted">last 12 months ${money0(last12)}</div></div>
+    <div class="glass card" style="gap:2px;padding:12px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">All ${esc(t.cat)}</div><div class="mid num">${money0(catAvg)}</div><div class="tiny muted">a month, last 6 months</div></div>
+  </div>
+  <div class="chart" role="img" aria-label="${esc(store)} each month for 12 months" style="height:90px">${last12keys.map(k => `<div class="col"><div class="pair" style="height:66px"><i class="exp" style="width:12px;background:var(--accent);height:${Math.round((byM[k] || 0) / maxV * 66)}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+k.slice(5) - 1]}</span></div>`).join('')}</div>
+  <div class="h2">${all.length > 1 ? `${t.type === 'income' ? 'Every payment from' : 'Every purchase at'} ${esc(store)}` : 'Only this one so far'}</div>
+  <div class="list">${all.slice(0, 30).map(x => `<button type="button" class="tx" data-act="txdetail" data-id="${esc(x.id)}" data-m="${esc(x.date.slice(0, 7))}" style="padding:8px 0${x.id === t.id ? ';opacity:.6' : ''}"><span class="t"><div>${esc(x.desc)}</div><div class="tiny muted">${esc(x.cat)} · ${esc(prettyDay(x.date))}</div></span><span class="amt num ${x.type === 'income' ? 'in' : ''}">${money(x.amount)}</span></button>`).join('')}</div>
+  ${all.length > 30 ? `<div class="tiny muted">Showing the latest 30 of ${all.length}.</div>` : ''}
+  ${all.length > 1 ? `<div class="row" style="gap:8px"><select class="input" id="td-cat" style="flex:1">${catOptions(t.type, t.cat)}</select><button type="button" class="btn" data-act="txrecat">Use for all ${all.length}</button></div>` : ''}
+  <button type="button" class="btn primary block" data-act="txedit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0, 7))}">Edit this transaction</button>`, { kind: 'txdetail', store, type: t.type, ids: all.map(x => x.id) });
+}
 function statusBar(r) {
   const w = Math.min(100, Math.round(r.pct * 100));
   return `<div class="bar" role="img" aria-label="${esc(r.name)} ${Math.round(r.pct*100)} percent of plan"><i class="${r.status === 'over' ? 'over' : r.status === 'warn' ? 'warn' : ''}" style="width:${r.planned > 0 ? w : 0}%"></i></div>`;
@@ -621,7 +659,8 @@ const SKINS = [
   { id: 'lagoon', name: 'Deep Lagoon', bg: '#071A24', b1: '#0F7C78', b2: '#1E4FA8', accent: '#5EEAD4' },
   { id: 'ember', name: 'Plum Ember', bg: '#1A0F1F', b1: '#B8476A', b2: '#6B2E8F', accent: '#FF9E7A' },
   { id: 'gold', name: 'Midnight Gold', bg: '#0E0E16', b1: '#3B2F6B', b2: '#8A6A1F', accent: '#F5C451' },
-  { id: 'sage', name: 'Sage Light', bg: '#EEF0E6', b1: '#A8C3A0', b2: '#E9C79B', accent: '#2F5D46' }
+  { id: 'sage', name: 'Sage Light', bg: '#EEF0E6', b1: '#A8C3A0', b2: '#E9C79B', accent: '#2F5D46' },
+  { id: 'concrete', name: 'Concrete', bg: '#D9DDDF', b1: '#8E9FAC', b2: '#3F474F', accent: '#D6452A' }
 ];
 const iconFile = id => id === 'lagoon' ? 'icon-180.png' : `icon-${id}-180.png`;
 const currentSkin = () => document.documentElement.getAttribute('data-skin') || 'lagoon';
@@ -2206,7 +2245,10 @@ document.addEventListener('click', async e => {
     case 'close': closeSheet(); break;
     case 'toastaction': { const a = toastAction; toastAction = null; $('toast').hidden = true; if (a) a.run(); break; }
     case 'swipedel': { const row = el.closest('.swipe'); const t = row && txOf(row.dataset.m).find(x => x.id === row.dataset.id); SW.open = null; if (t) removeTx(t); break; }
-    case 'edit': { const sr = el.closest('.swipe'); if (sr && sr.dataset.swiped) break; if (sr && SW.open === sr) { swipeClose(sr); break; } const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxSheet(t); break; }
+    case 'edit': { const sr = el.closest('.swipe'); if (sr && sr.dataset.swiped) break; if (sr && SW.open === sr) { swipeClose(sr); break; } const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxDetail(t); break; }
+    case 'txdetail': { const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxDetail(t); break; }
+    case 'txedit': { const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxSheet(t); break; }
+    case 'txrecat': { const cat = $('td-cat').value; if (!cat) break; const ids = new Set(sheetCtx.ids), touched = new Set(); let n = 0, sample = null; for (const t of allTx()) if (ids.has(t.id) && t.cat !== cat) { t.cat = cat; n++; sample = t; touched.add(t.date.slice(0, 7)); } if (sample) learn(sample.desc, sample.type, cat); const first = allTx().find(x => ids.has(x.id)); closeSheet(); render(); await saveMonths([...touched]); await saveConfig(); toast(`Moved ${n} to ${cat}`); if (first) openTxDetail(first); break; }
     case 'settype': {
       sheetCtx.type = el.dataset.t;
       el.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
