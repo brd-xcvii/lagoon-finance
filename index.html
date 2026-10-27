@@ -965,7 +965,7 @@ function parseBankShot(tsv, W, todayIso) {
     m = /^available\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.available == null) acc.available = shotMoney(m[1]);
   }
   const availY = (allLines.find(l => /^available/i.test(l.text)) || { y0: Infinity }).y0;
-  const title = allLines.filter(l => l.y0 < availY && (l.text.replace(/[^a-z]/gi, '').length >= 4) && !/\d{1,2}:\d{2}/.test(l.text)).slice(-1)[0];
+  const title = allLines.filter(l => l.y0 < availY && (l.text.replace(/[^a-z]/gi, '').length >= 4) && !/\d{1,2}:\d{2}/.test(l.text) && !/^\W*account\W+goal\W*$/i.test(l.text))[0];
   if (title) acc.name = title.text.replace(/^[^A-Za-z]+/, '').replace(/[^A-Za-z0-9 &'-]+$/, '').trim();
   // transactions: blocks of description lines under a date heading, closed by the bank's category label
   const firstDate = L.findIndex(l => SHOT_DATE.test(l.all));
@@ -982,7 +982,7 @@ function parseBankShot(tsv, W, todayIso) {
       else { const mo = MON.indexOf(dm[2].toLowerCase()); let y = dm[3] ? +dm[3] : now.getFullYear(); let d = new Date(y, mo, +dm[1]); if (!dm[3] && d - now > 2 * 86400000) d = new Date(y - 1, mo, +dm[1]); date = isoOf(d); }
       cur = null; continue;
     }
-    const cat = CBA_CATS[t.toLowerCase().replace(/\s+/g, ' ').trim()];
+    const cat = CBA_CATS[t.toLowerCase().replace(/[^a-z& ]+/g, ' ').replace(/\s+/g, ' ').trim()];
     if (cat !== undefined && cur) { cur.cbaCat = t.trim(); cur.cat = cat; cur.y1 = l.y1; cur = null; continue; }
     if ((t.replace(/[^a-z]/gi, '').length < 3)) continue;
     if (!cur || l.y0 - cur.y1 > lh * 1.9) { cur = { date, lines: [], y0: l.y0, y1: l.y1, cat: null }; blocks.push(cur); }
