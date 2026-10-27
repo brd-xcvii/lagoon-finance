@@ -377,13 +377,14 @@ function suggestCat(desc, type) {
 function learn(desc, type, cat) { const key = normKey(desc); if (!key || !cat) return false; const k = (type === 'income' ? 'i:' : 'e:') + key; if (config.rules[k] === cat) return false; config.rules[k] = cat; return true; }
 
 /* ---------- recurring ---------- */
-const FREQS = [['weekly','Weekly'],['fortnightly','Fortnightly'],['4weekly','Every 4 weeks'],['monthly','Monthly'],['quarterly','Every 3 months'],['yearly','Yearly']];
+const FREQS = [['once','Once'],['weekly','Weekly'],['fortnightly','Fortnightly'],['4weekly','Every 4 weeks'],['monthly','Monthly'],['quarterly','Every 3 months'],['yearly','Yearly']];
 const freqLabel = f => (FREQS.find(x => x[0] === f) || FREQS[3])[1];
 // Older items stored a day of the month and a first month; read them as monthly from that date.
 const recStart = r => r.startDate || `${r.start || mk(today())}-${pad(Math.min(+r.day || 1, daysIn(r.start || mk(today()))))}`;
 const recFreq = r => r.freq || 'monthly';
 function occurrence(r, n) {
   const [sy, sm, sd] = recStart(r).split('-').map(Number), f = recFreq(r);
+  if (f === 'once') return n === 0 ? recStart(r) : '9999-12-31';
   const days = { weekly: 7, fortnightly: 14, '4weekly': 28 }[f];
   if (days) return isoDate(new Date(sy, sm - 1, sd + n * days));
   const k = addMonths(`${sy}-${pad(sm)}`, n * ({ quarterly: 3, yearly: 12 }[f] || 1));
@@ -637,7 +638,7 @@ const allTx = () => Object.values(months).flat();
 const dayDiff = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
 const shortDay = iso => new Date(iso + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const PERIOD_DAYS = { weekly: 7, fortnightly: 14, '4weekly': 28, monthly: 365 / 12, quarterly: 365 / 4, yearly: 365 };
+const PERIOD_DAYS = { once: Infinity, weekly: 7, fortnightly: 14, '4weekly': 28, monthly: 365 / 12, quarterly: 365 / 4, yearly: 365 };
 const perMonth = (amt, f) => (+amt || 0) * (365 / 12) / (PERIOD_DAYS[f] || PERIOD_DAYS.monthly);
 
 /* pay: base amount and payday, worked out from paychecks unless set by hand */
@@ -747,7 +748,12 @@ function debtFlows(d) {
 }
 function debtBalanceAt(d, iso, flows) {
   flows = flows || debtFlows(d); let b = +d.balance || 0;
-  if (iso >= d.asOf) { for (const f of flows) if (f.date > d.asOf && f.date <= iso) b -= -f.v; }
+  const daily = (+d.rate || 0) / 100 / 365;
+  if (iso >= d.asOf) {
+    let at = d.asOf;
+    for (const f of flows.filter(f => f.date > d.asOf && f.date <= iso).sort((a, c) => a.date.localeCompare(c.date))) { b += b * daily * dayDiff(at, f.date); at = f.date; b -= -f.v; if (b < 0) b = 0; }
+    b += b * daily * dayDiff(at, iso);
+  }
   else { for (const f of flows) if (f.date > iso && f.date <= d.asOf) b += -f.v; }
   return round2(Math.max(0, b));
 }
@@ -758,9 +764,11 @@ function debtRows() {
     const paid30 = round2(-flows.filter(f => f.v < 0 && f.date > from30).reduce((a, f) => a + f.v, 0));
     const borrowed = round2(flows.filter(f => f.v > 0).reduce((a, f) => a + f.v, 0)), repaid = round2(-flows.filter(f => f.v < 0).reduce((a, f) => a + f.v, 0));
     const per = +d.repay || 0, weekly = round2(per * 7 / (PERIOD_DAYS[d.freq] || 7));
-    const periods = per > 0 ? Math.ceil(bal / per) : 0;
-    const payoff = bal <= 0 ? 'Paid off' : per > 0 ? shortDate(addDaysIso(now, Math.round(periods * (PERIOD_DAYS[d.freq] || 7)))) : 'No repayment set';
-    return { ...d, bal, paid30, borrowed, repaid, weekly, payoff };
+    const pd = PERIOD_DAYS[d.freq] || 7, ip = (+d.rate || 0) / 100 * (pd === Infinity ? 0 : pd) / 365, interestPer = bal * ip;
+    const periods = per <= 0 ? 0 : d.freq === 'once' ? 1 : ip > 0 ? (per > interestPer ? Math.ceil(-Math.log(1 - ip * bal / per) / Math.log(1 + ip)) : Infinity) : Math.ceil(bal / per);
+    const payoff = bal <= 0 ? 'Paid off' : per <= 0 ? 'No repayment set' : periods === Infinity ? 'Never at this repayment' : d.freq === 'once' ? 'One payment' : shortDate(addDaysIso(now, Math.round(periods * pd)));
+    const yearlyInterest = round2(bal * (+d.rate || 0) / 100);
+    return { ...d, bal, paid30, borrowed, repaid, weekly, payoff, yearlyInterest, never: periods === Infinity };
   });
 }
 function viewDebts() {
@@ -776,11 +784,11 @@ function viewDebts() {
     <div class="big num" style="color:${nw != null && nw < 0 ? 'var(--over)' : 'var(--fg)'}">${nw == null ? '—' : (nw < 0 ? '−' : '') + money(Math.abs(nw))}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip num">Debts ${money0(total)}</span><span class="chip num">Repayments ${money0(weekly)} a week</span>${change != null ? `<span class="chip ${change < 0 ? 'over' : ''} num">${change >= 0 ? '+' : '−'}${money0(Math.abs(change))} in 12 months</span>` : ''}</div>
     ${vals.length > 1 ? `<div class="chart" role="img" aria-label="Net worth at the end of each month">${hist.map((v, i) => `<div class="col"><div class="pair"><i style="width:14px;background:${v != null && v < 0 ? 'var(--over)' : 'var(--accent)'};height:${v == null ? 0 : Math.max(2, Math.round(Math.abs(v) / maxAbs * 96))}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+ends[i].slice(5, 7) - 1]}</span></div>`).join('')}</div>
-    <div class="tiny muted">Bar height shows size. Red bars are below zero. Past balances are worked out from your repayments, so interest is not included.</div>` : ''}
+    <div class="tiny muted">Bar height shows size. Red bars are below zero. Past balances come from your repayments, so past interest is not included.</div>` : ''}
   </section>
   ${rows.length ? rows.sort((a, b) => b.bal - a.bal).map(r => `<section class="glass card" style="gap:8px">
-    <div class="row between"><div style="min-width:0"><div class="h2" style="overflow-wrap:anywhere">${esc(r.name)}</div><div class="tiny muted">${r.kind === 'advance' ? 'Pay advance' : 'Loan'} · ${money(r.repay || 0)} ${esc(freqLabel(r.freq).toLowerCase())}</div></div><div class="mid num">${money0(r.bal)}</div></div>
-    <div class="row" style="flex-wrap:wrap;gap:6px"><span class="chip num">${money0(r.weekly)} a week</span><span class="chip num">Paid ${money0(r.paid30)} in 30 days</span><span class="chip num">${esc(r.payoff)}</span></div>
+    <div class="row between"><div style="min-width:0"><div class="h2" style="overflow-wrap:anywhere">${esc(r.name)}</div><div class="tiny muted">${r.kind === 'advance' ? 'Pay advance' : 'Loan'} · ${money(r.repay || 0)} ${esc(freqLabel(r.freq).toLowerCase())}${r.rate ? ' · ' + r.rate + '% a year' : ''}</div></div><div class="mid num">${money0(r.bal)}</div></div>
+    <div class="row" style="flex-wrap:wrap;gap:6px"><span class="chip num">${money0(r.weekly)} a week</span><span class="chip num">Paid ${money0(r.paid30)} in 30 days</span><span class="chip ${r.never ? 'over' : ''} num">${esc(r.payoff)}</span>${r.rate ? `<span class="chip warn num">Interest about ${money0(r.yearlyInterest / 12)} a month</span>` : ''}</div>
     ${r.borrowed ? `<div class="tiny muted num">Since ${esc(shortDate(config.startMonth + '-01'))}: borrowed ${money0(r.borrowed)}, repaid ${money0(r.repaid)}${r.kind === 'advance' && r.repaid + r.bal > r.borrowed ? `. Fees so far: about ${money0(r.repaid + r.bal - r.borrowed)}` : ''}.</div>` : ''}
     <div class="tiny muted">Balance from ${esc(shortDate(r.asOf))}, then follows payments matching “${esc(r.match || r.name)}”.</div>
     <button type="button" class="btn" data-act="debtedit" data-id="${esc(r.id)}">Update balance or edit</button></section>`).join('')
@@ -796,6 +804,7 @@ function openDebt(id) {
   <div class="field"><label for="d-kind">Type</label><select class="input" id="d-kind"><option value="loan" ${!d || d.kind !== 'advance' ? 'selected' : ''}>Loan</option><option value="advance" ${d && d.kind === 'advance' ? 'selected' : ''}>Pay advance</option></select></div></div>
   <div class="grid2"><div class="field"><label for="d-repay">Repayment</label><input class="input num" id="d-repay" inputmode="decimal" value="${esc(d ? d.repay : '')}"></div>
   <div class="field"><label for="d-freq">How often</label><select class="input" id="d-freq">${FREQS.map(([k, l]) => `<option value="${k}" ${(d ? d.freq : 'weekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+  <div class="field"><label for="d-rate">Interest rate (% a year)</label><input class="input num" id="d-rate" inputmode="decimal" value="${esc(d && d.rate ? d.rate : '')}" placeholder="0"></div>
   <div class="field"><label for="d-match">Words in the bank description</label><input class="input" id="d-match" value="${esc(d ? d.match : '')}" placeholder="Beforepay"></div>
   <div class="note">Separate several with commas. The app uses them to find repayments and new advances.</div>
   <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
@@ -805,7 +814,7 @@ function openDebt(id) {
 async function saveDebt() {
   const name = $('d-name').value.trim(), bal = Math.abs(parseMoney($('d-bal').value)), repay = Math.abs(parseMoney($('d-repay').value)) || 0;
   if (!name || !isFinite(bal)) { const e = $('formErr'); e.hidden = false; e.textContent = !name ? 'Enter a name.' : 'Enter the balance.'; return; }
-  const rec = { name, balance: round2(bal), asOf: isoDate(today()), repay: round2(repay), freq: $('d-freq').value, match: $('d-match').value.trim() || name, kind: $('d-kind').value };
+  const rec = { name, balance: round2(bal), asOf: isoDate(today()), repay: round2(repay), freq: $('d-freq').value, match: $('d-match').value.trim() || name, kind: $('d-kind').value, rate: Math.abs(parseMoney($('d-rate').value)) || 0 };
   config.debts = config.debts || [];
   if (sheetCtx.id) Object.assign(config.debts.find(x => x.id === sheetCtx.id), rec); else config.debts.push({ id: uid(), ...rec });
   closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast('Debt saved');
@@ -814,15 +823,16 @@ async function saveDebt() {
 function isDebtsFile(rows) { const h = (rows[0] || []).map(c => String(c).trim().toLowerCase()); return h.includes('balance') && h.some(c => /repay/.test(c)); }
 function openDebtsImport(rows) {
   const h = rows[0].map(c => String(c).trim().toLowerCase()), col = re => h.findIndex(c => re.test(c));
-  const ni = col(/^(name|debt)$/), bi = col(/^balance$/), ai = col(/as ?of|date/), ri = col(/repay/), fi = col(/freq|how often/), mi = col(/match|words/), ki = col(/^(type|kind)$/);
+  const ni = col(/^(name|debt)$/), bi = col(/^balance$/), ai = col(/as ?of|date/), ri = col(/repay/), fi = col(/freq|how often/), mi = col(/match|words/), ki = col(/^(type|kind)$/), xi = col(/rate|interest/);
   const have = new Set((config.debts || []).map(d => d.name.toLowerCase()));
   const list = rows.slice(1).map(r => ({ name: String(r[ni] || '').trim(), balance: round2(Math.abs(parseMoney(r[bi])) || 0), asOf: parseDateStr(String(r[ai] || ''), 'dmy') || isoDate(today()),
-    repay: round2(Math.abs(parseMoney(r[ri])) || 0), freq: freqOf(r[fi]), match: String(r[mi] || '').trim(), kind: /adv/i.test(String(r[ki] || '')) ? 'advance' : 'loan' })).filter(d => d.name);
-  const fresh = list.filter(d => !have.has(d.name.toLowerCase()));
+    repay: round2(Math.abs(parseMoney(r[ri])) || 0), freq: freqOf(r[fi]), match: String(r[mi] || '').trim(), kind: /adv/i.test(String(r[ki] || '')) ? 'advance' : 'loan',
+    rate: xi >= 0 && isFinite(parseMoney(r[xi])) ? Math.abs(parseMoney(r[xi])) : 0 })).filter(d => d.name);
+  const fresh = list;
   openSheet(`${sheetHead('Add debts')}
-  <div class="small">Found <strong class="num">${list.length}</strong> debts. <strong class="num">${fresh.length}</strong> are new, totalling <strong class="num">${money0(fresh.reduce((a, d) => a + d.balance, 0))}</strong>.</div>
-  <div class="preview">${fresh.map(d => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(d.name)}</div><div class="tiny muted">${money(d.repay)} ${esc(freqLabel(d.freq).toLowerCase())} · as of ${esc(shortDate(d.asOf))}</div></span><span class="amt num">${money0(d.balance)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these debts.</div>'}</div>
-  <button type="button" class="btn primary block" data-act="debtsimportgo" ${fresh.length ? '' : 'disabled'}>Add ${fresh.length} debt${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'debtsimport', debts: fresh });
+  <div class="small">Found <strong class="num">${list.length}</strong> debts: <strong class="num">${list.filter(d => !have.has(d.name.toLowerCase())).length}</strong> new, <strong class="num">${list.filter(d => have.has(d.name.toLowerCase())).length}</strong> updated, totalling <strong class="num">${money0(fresh.reduce((a, d) => a + d.balance, 0))}</strong>.</div>
+  <div class="preview">${fresh.map(d => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(d.name)}</div><div class="tiny muted">${have.has(d.name.toLowerCase()) ? 'Update · ' : ''}${money(d.repay)} ${esc(freqLabel(d.freq).toLowerCase())}${d.rate ? ' · ' + d.rate + '% a year' : ''} · as of ${esc(shortDate(d.asOf))}</div></span><span class="amt num">${money0(d.balance)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these debts.</div>'}</div>
+  <button type="button" class="btn primary block" data-act="debtsimportgo" ${fresh.length ? '' : 'disabled'}>Save ${fresh.length} debt${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'debtsimport', debts: fresh });
 }
 
 /* trends: categories and stores this month against last month, and pay split into base and commission */
@@ -1182,7 +1192,7 @@ async function deleteRecurring(btn) {
 function isBillsFile(rows) { const h = (rows[0] || []).map(c => String(c).trim().toLowerCase()); return h.some(c => /^(frequency|freq|how often)$/.test(c)) && h.some(c => /^(name|bill)$/.test(c)); }
 function freqOf(v) {
   const t = String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (/^week/.test(t)) return 'weekly'; if (/fortnight|2week|biweek/.test(t)) return 'fortnightly'; if (/4week|every4/.test(t)) return '4weekly';
+  if (/^(once|oneoff|single)/.test(t)) return 'once'; if (/^week/.test(t)) return 'weekly'; if (/fortnight|2week|biweek/.test(t)) return 'fortnightly'; if (/4week|every4/.test(t)) return '4weekly';
   if (/quarter|3month/.test(t)) return 'quarterly'; if (/year|annual/.test(t)) return 'yearly'; return 'monthly';
 }
 function openBillsImport(rows) {
@@ -1194,14 +1204,16 @@ function openBillsImport(rows) {
     return { name: String(r[ni] || '').replace(/\s+/g, ' ').trim(), amount: round2(Math.abs(parseMoney(r[ai])) || 0), type,
       cat: matchCat(raw, type) || raw || 'Other', freq: freqOf(r[fi]), startDate: parseDateStr(String(r[di] || ''), 'dmy') || '' };
   }).filter(b => b.name && b.amount > 0 && b.startDate);
-  const fresh = bills.filter(b => !have.has(b.name.toLowerCase()));
+  const removals = rows.slice(1).filter(r => /remove|delete|stop|cancel/i.test(String(r[fi] || ''))).map(r => String(r[ni] || '').trim()).filter(n => have.has(n.toLowerCase()));
+  const fresh = bills.filter(b => !removals.some(n => n.toLowerCase() === b.name.toLowerCase()));
   const per = b => b.amount * ({ weekly: 52 / 12, fortnightly: 26 / 12, '4weekly': 13 / 12, quarterly: 1 / 3, yearly: 1 / 12 }[b.freq] || 1);
   const monthly = round2(fresh.filter(b => b.type === 'expense').reduce((a, b) => a + per(b), 0));
   openSheet(`${sheetHead('Add recurring bills')}
-  <div class="small">Found <strong class="num">${bills.length}</strong> bill${bills.length === 1 ? '' : 's'}. <strong class="num">${fresh.length}</strong> are new, about <strong class="num">${money0(monthly)}</strong> a month.</div>
-  <div class="preview">${fresh.map(b => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(b.name)}</div><div class="tiny muted">${esc(b.cat)} · ${esc(freqLabel(b.freq))} · next ${esc(shortDate(b.startDate))}</div></span><span class="amt num">${money(b.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these bills.</div>'}</div>
+  <div class="small">Found <strong class="num">${bills.length}</strong> bill${bills.length === 1 ? '' : 's'}: <strong class="num">${bills.filter(b => !have.has(b.name.toLowerCase())).length}</strong> new, <strong class="num">${bills.filter(b => have.has(b.name.toLowerCase())).length}</strong> updated. About <strong class="num">${money0(monthly)}</strong> a month.</div>
+  <div class="preview">${fresh.map(b => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(b.name)}</div><div class="tiny muted">${have.has(b.name.toLowerCase()) ? 'Update · ' : ''}${esc(b.cat)} · ${esc(freqLabel(b.freq))} · next ${esc(shortDate(b.startDate))}</div></span><span class="amt num">${money(b.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these bills.</div>'}</div>
+  ${removals.length ? `<div class="note" style="color:var(--over)">Remove: ${removals.map(esc).join(', ')}</div>` : ''}
   <div class="note">Each bill is added on its date from now on. When your bank file arrives later, the matching bank line takes the bill's place, so nothing doubles.</div>
-  <button type="button" class="btn primary block" data-act="billsimportgo" ${fresh.length ? '' : 'disabled'}>Add ${fresh.length} bill${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'billsimport', bills: fresh });
+  <button type="button" class="btn primary block" data-act="billsimportgo" ${fresh.length || removals.length ? '' : 'disabled'}>Save ${fresh.length} bill${fresh.length === 1 ? '' : 's'}${removals.length ? ` and remove ${removals.length}` : ''}</button>`, { kind: 'billsimport', bills: fresh, removals });
 }
 
 /* budget file: columns Category, Monthly budget, Type (Expense or Income, optional). No Date column. */
@@ -1690,8 +1702,8 @@ document.addEventListener('click', async e => {
     case 'debtedit': openDebt(el.dataset.id); break;
     case 'debtsave': saveDebt(); break;
     case 'debtdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.debts = config.debts.filter(d => d.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Debt deleted'); break;
-    case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) config.debts.push({ id: uid(), ...d }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
-    case 'billsimportgo': { const bs = sheetCtx.bills || []; for (const b of bs) config.recurring.push({ id: uid(), ...b, skip: [] }); closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
+    case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d); else config.debts.push({ id: uid(), ...d }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
+    case 'billsimportgo': { const bs = sheetCtx.bills || [], rm = (sheetCtx.removals || []).map(n => n.toLowerCase()); config.recurring = config.recurring.filter(r => !rm.includes(r.name.toLowerCase())); for (const b of bs) { const ex = config.recurring.find(r => r.name.toLowerCase() === b.name.toLowerCase()); if (ex) { Object.assign(ex, b); delete ex.day; delete ex.start; } else config.recurring.push({ id: uid(), ...b, skip: [] }); } closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
     case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
     case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
     case 'goaldel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.goals = config.goals.filter(g => g.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Goal deleted'); break;
