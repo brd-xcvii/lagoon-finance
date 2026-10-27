@@ -12,10 +12,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#071A24">
+<script>
+(function(){try{
+  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6'};
+  var s=localStorage.getItem('lf-skin'); if(!SK[s]) s='lagoon';
+  var q=new URLSearchParams(location.search).get('icon'); var ic=SK[q]?q:s;
+  if(s!=='lagoon') document.documentElement.setAttribute('data-skin',s);
+  document.querySelector('meta[name=theme-color]').setAttribute('content',SK[s]);
+  if(ic!=='lagoon') document.querySelector('link[rel=apple-touch-icon]').setAttribute('href','icon-'+ic+'-180.png');
+}catch(e){}})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>
-/* Layout: one phone column, glass cards over a lagoon backdrop, floating glass tab bar. Single dark look by choice. */
+/* Layout: one phone column, glass cards over a coloured backdrop, floating glass tab bar. Four colour themes. */
 :root{
   color-scheme: dark;
   --bg:#071A24; --bg-2:#0B2430;
@@ -25,29 +35,59 @@
   --over:#FB8A9B; --over-soft:rgba(251,138,155,.16);
   --glass:rgba(255,255,255,.075); --glass-2:rgba(255,255,255,.12);
   --line:rgba(255,255,255,.17); --hi:rgba(255,255,255,.28);
-  --sheet:#0D2731;
+  --sheet:#0D2731; --sheet-bg:rgba(13,39,49,.88); --toast:rgba(13,39,49,.92);
+  --nav:rgba(10,36,46,.6); --scrim:rgba(2,10,14,.55); --divider:rgba(255,255,255,.07);
+  --track:rgba(255,255,255,.12); --field:rgba(0,0,0,.22); --field-line:rgba(255,255,255,.17);
+  --grab:rgba(255,255,255,.25); --scan-line:rgba(94,234,212,.5); --shadow:rgba(0,0,0,.22);
+  --b1:#0F7C78; --b2:#1E4FA8; --b3:#0E6B5C; --picker:invert(.8);
   --font:'Manrope', -apple-system, 'SF Pro Text', system-ui, sans-serif;
   --r-lg:28px; --r-md:22px; --r-sm:14px;
 }
+/* Colour themes, picked in More. Each one only changes tokens. */
+:root[data-skin="ember"]{
+  --bg:#1A0F1F; --bg-2:#2A1730; --fg:#FBF1F4; --muted:#D9BFCB; --faint:#9A7D8B;
+  --accent:#FF9E7A; --accent-ink:#2A1018; --accent-soft:rgba(255,158,122,.16);
+  --warn:#FFD166; --warn-soft:rgba(255,209,102,.16); --over:#FF8FA3; --over-soft:rgba(255,143,163,.16);
+  --sheet:#2A1730; --sheet-bg:rgba(42,23,48,.9); --toast:rgba(42,23,48,.94); --nav:rgba(40,20,48,.6); --scrim:rgba(10,4,12,.55);
+  --scan-line:rgba(255,158,122,.5); --b1:#B8476A; --b2:#6B2E8F; --b3:#E0784A;
+}
+:root[data-skin="gold"]{
+  --bg:#0E0E16; --bg-2:#1A1A26; --fg:#F4F1E8; --muted:#BDB7CC; --faint:#807A92;
+  --accent:#F5C451; --accent-ink:#2A2005; --accent-soft:rgba(245,196,81,.16);
+  --sheet:#1A1826; --sheet-bg:rgba(26,24,38,.9); --toast:rgba(26,24,38,.94); --nav:rgba(22,20,34,.6); --scrim:rgba(4,4,8,.55);
+  --scan-line:rgba(245,196,81,.5); --b1:#3B2F6B; --b2:#8A6A1F; --b3:#1F3B5B;
+}
+:root[data-skin="sage"]{
+  color-scheme: light;
+  --bg:#EEF0E6; --bg-2:#F7F8F2; --fg:#1C2620; --muted:#4A5A50; --faint:#6B7A70;
+  --accent:#2F5D46; --accent-ink:#FFFFFF; --accent-soft:rgba(47,93,70,.12);
+  --warn:#B45309; --warn-soft:rgba(180,83,9,.12); --over:#BE123C; --over-soft:rgba(190,18,60,.1);
+  --glass:rgba(255,255,255,.45); --glass-2:rgba(255,255,255,.75); --line:rgba(255,255,255,.75); --hi:rgba(255,255,255,.95);
+  --sheet:#F2F4EC; --sheet-bg:rgba(247,248,242,.93); --toast:rgba(255,255,255,.94); --nav:rgba(255,255,255,.62); --scrim:rgba(28,38,32,.28);
+  --divider:rgba(28,38,32,.08); --track:rgba(28,38,32,.1); --field:rgba(255,255,255,.65); --field-line:rgba(28,38,32,.14);
+  --grab:rgba(28,38,32,.2); --scan-line:rgba(47,93,70,.4); --shadow:rgba(60,80,60,.12);
+  --b1:#A8C3A0; --b2:#E9C79B; --b3:#9FC2BE; --picker:none;
+}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-html,body{height:100%;margin:0}
+html{min-height:calc(100% + env(safe-area-inset-top,0px))}
+body{margin:0;min-height:calc(100% + env(safe-area-inset-top,0px))}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--nav);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .num{font-variant-numeric:tabular-nums}
 .blob{position:fixed;border-radius:50%;pointer-events:none;z-index:0}
-.b1{width:380px;height:380px;left:-140px;top:-90px;background:#0F7C78;filter:blur(80px);opacity:.8}
-.b2{width:320px;height:320px;right:-130px;top:300px;background:#1E4FA8;filter:blur(90px);opacity:.7}
-.b3{width:280px;height:280px;left:20px;bottom:-80px;background:#0E6B5C;filter:blur(90px);opacity:.6}
+.b1{width:380px;height:380px;left:-140px;top:-90px;background:var(--b1);filter:blur(80px);opacity:.8}
+.b2{width:320px;height:320px;right:-130px;top:300px;background:var(--b2);filter:blur(90px);opacity:.7}
+.b3{width:280px;height:280px;left:20px;bottom:-80px;background:var(--b3);filter:blur(90px);opacity:.6}
 @media (prefers-reduced-motion:no-preference){.b1{animation:drift 22s ease-in-out infinite alternate}.b2{animation:drift 28s ease-in-out infinite alternate-reverse}}
 @keyframes drift{to{transform:translate(40px,30px) scale(1.08)}}
 
 .app{position:relative;z-index:1;max-width:520px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:calc(18px + env(safe-area-inset-top,0px)) calc(132px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:14px}
-.glass{background:var(--glass);-webkit-backdrop-filter:blur(26px) saturate(170%);backdrop-filter:blur(26px) saturate(170%);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--hi),0 18px 40px rgba(0,0,0,.22);border-radius:var(--r-lg)}
+.glass{background:var(--glass);-webkit-backdrop-filter:blur(26px) saturate(170%);backdrop-filter:blur(26px) saturate(170%);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--hi),0 18px 40px var(--shadow);border-radius:var(--r-lg)}
 .card{padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;align-items:center;gap:10px;min-width:0}
 .between{justify-content:space-between}
@@ -67,36 +107,36 @@ button{cursor:pointer}
 .btn.danger{color:var(--over)}
 .btn.block{width:100%}
 .btn:disabled{opacity:.5}
-.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden}
+.bar{height:8px;border-radius:4px;background:var(--track);overflow:hidden}
 .bar>i{display:block;height:100%;border-radius:4px;background:var(--accent)}
 .bar>i.warn{background:var(--warn)} .bar>i.over{background:var(--over)}
 .list{display:flex;flex-direction:column}
-.tx{display:flex;align-items:center;gap:12px;padding:10px 4px;background:none;border:0;border-bottom:1px solid rgba(255,255,255,.07);text-align:left;width:100%;min-width:0}
+.tx{display:flex;align-items:center;gap:12px;padding:10px 4px;background:none;border:0;border-bottom:1px solid var(--divider);text-align:left;width:100%;min-width:0}
 .tx:last-child{border-bottom:0}
-.avatar{width:40px;height:40px;flex:none;border-radius:14px;background:var(--glass-2);border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:var(--muted)}
+.avatar{width:40px;height:40px;flex:none;border-radius:14px;background:var(--glass-2);border:1px solid var(--track);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:var(--muted)}
 .tx .t{flex:1;min-width:0}
 .tx .t div:first-child{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .amt{font-weight:700;white-space:nowrap}
 .amt.in{color:var(--accent)}
 .daylabel{font-size:12px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:12px 4px 2px}
 .empty{padding:22px 8px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:12px;align-items:center}
-.seg{display:flex;padding:4px;border-radius:999px;background:rgba(0,0,0,.22);border:1px solid var(--line);gap:4px}
+.seg{display:flex;padding:4px;border-radius:999px;background:var(--field);border:1px solid var(--line);gap:4px}
 .seg button{flex:1;min-height:40px;border-radius:999px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:14px}
 .seg button[aria-pressed="true"]{background:var(--glass-2);color:var(--fg);box-shadow:inset 0 1px 0 var(--hi)}
 .field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .field label{font-size:13px;font-weight:700;color:var(--muted)}
-.input{display:block;width:100%;min-width:0;max-width:100%;height:48px;margin:0;padding:0 14px;-webkit-appearance:none;appearance:none;line-height:normal;border-radius:var(--r-sm);border:1px solid var(--line);background:rgba(0,0,0,.22);font-size:16px}
+.input{display:block;width:100%;min-width:0;max-width:100%;height:48px;margin:0;padding:0 14px;-webkit-appearance:none;appearance:none;line-height:normal;border-radius:var(--r-sm);border:1px solid var(--field-line);background:var(--field);font-size:16px}
 select.input{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 20px) 21px,calc(100% - 15px) 21px;background-size:5px 5px;background-repeat:no-repeat;padding-right:36px}
 .amount-input{font-size:34px;font-weight:800;height:64px;text-align:center}
 input[type=date].input,input[type=month].input{line-height:46px;text-align:left}
 input[type=date].input::-webkit-date-and-time-value,input[type=month].input::-webkit-date-and-time-value{text-align:left;margin:0;min-height:46px;line-height:46px}
-input[type=date].input::-webkit-calendar-picker-indicator{filter:invert(.8)}
+input[type=date].input::-webkit-calendar-picker-indicator{filter:var(--picker)}
 .alert{display:flex;align-items:center;gap:10px;font-size:14px}
 .dot{width:8px;height:8px;border-radius:4px;flex:none;background:var(--warn)} .dot.over{background:var(--over)}
-.planinput{width:96px;min-height:40px;padding:0 10px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.22);text-align:right;font-size:16px}
+.planinput{width:96px;min-height:40px;padding:0 10px;border-radius:12px;border:1px solid var(--field-line);background:var(--field);text-align:right;font-size:16px}
 .tablebox{overflow-x:auto;margin:0 -4px}
 table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
-th,td{padding:8px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.07)}
+th,td{padding:8px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--divider)}
 th:first-child,td:first-child{text-align:left}
 th{color:var(--muted);font-weight:700;font-size:12px}
 tr.total td{font-weight:800;border-bottom:0}
@@ -110,7 +150,7 @@ tr.total td{font-weight:800;border-bottom:0}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .legend b{width:8px;height:8px;border-radius:2px;display:inline-block}
 .menu{display:flex;flex-direction:column}
-.menu button{display:flex;align-items:center;gap:12px;min-height:56px;padding:0 4px;background:none;border:0;border-bottom:1px solid rgba(255,255,255,.07);text-align:left;font-weight:600}
+.menu button{display:flex;align-items:center;gap:12px;min-height:56px;padding:0 4px;background:none;border:0;border-bottom:1px solid var(--divider);text-align:left;font-weight:600}
 .menu button:last-child{border-bottom:0}
 .menu .ic{width:36px;height:36px;border-radius:12px;background:var(--glass-2);display:flex;align-items:center;justify-content:center;color:var(--accent);flex:none}
 .menu .chev{margin-left:auto;color:var(--faint)}
@@ -119,22 +159,34 @@ tr.total td{font-weight:800;border-bottom:0}
 .status .led.local{background:var(--warn)}
 .status .led.wait{background:var(--faint)}
 
-nav.tabs{position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));width:min(488px,calc(100% - 2*max(16px,env(safe-area-inset-left,0px))));height:68px;border-radius:34px;background:rgba(10,36,46,.6);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--hi),0 16px 30px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:space-around;padding:0 6px}
+nav.tabs{position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));width:min(488px,calc(100% - 2*max(16px,env(safe-area-inset-left,0px))));height:68px;border-radius:34px;background:var(--nav);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--hi),0 16px 30px var(--shadow);display:flex;align-items:center;justify-content:space-around;padding:0 6px}
 nav.tabs button{width:52px;height:52px;border-radius:26px;border:0;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;font-weight:700}
 nav.tabs button[aria-current="page"]{background:var(--glass-2);color:var(--accent)}
 nav.tabs .add{width:58px;height:58px;border-radius:29px;background:var(--accent);color:var(--accent-ink);box-shadow:0 8px 20px rgba(0,0,0,.3)}
 nav.tabs .add:disabled{opacity:.5}
 
-.scrim{position:fixed;inset:0;z-index:40;background:rgba(2,10,14,.55);box-shadow:0 160px 0 0 rgba(2,10,14,.55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.sheet{position:fixed;z-index:41;left:50%;transform:translateX(-50%);bottom:0;width:min(560px,100%);max-height:calc(100% - 24px - env(safe-area-inset-top,0px));overflow-y:auto;border-radius:30px 30px 0 0;background:rgba(13,39,49,.88);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);border:1px solid var(--line);border-bottom:0;box-shadow:inset 0 1px 0 var(--hi),0 160px 0 0 var(--sheet);padding:10px max(18px,env(safe-area-inset-left,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
-.grab{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.25);align-self:center}
-.scan{display:flex;align-items:center;justify-content:center;gap:10px;min-height:52px;border-radius:18px;border:1px dashed rgba(94,234,212,.5);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.scrim{position:fixed;inset:0;z-index:40;background:var(--scrim);box-shadow:0 160px 0 0 var(--scrim);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.sheet{position:fixed;z-index:41;left:50%;transform:translateX(-50%);bottom:0;width:min(560px,100%);max-height:calc(100% - 24px - env(safe-area-inset-top,0px));overflow-y:auto;border-radius:30px 30px 0 0;background:var(--sheet-bg);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);border:1px solid var(--line);border-bottom:0;box-shadow:inset 0 1px 0 var(--hi),0 160px 0 0 var(--sheet);padding:10px max(18px,env(safe-area-inset-left,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--grab);align-self:center}
+.scan{display:flex;align-items:center;justify-content:center;gap:10px;min-height:52px;border-radius:18px;border:1px dashed var(--scan-line);background:var(--accent-soft);color:var(--accent);font-weight:700}
 .scan input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .note{font-size:13px;color:var(--muted);line-height:1.45}
 .preview{max-height:220px;overflow:auto;border-radius:14px;border:1px solid var(--line)}
-.toast{position:fixed;z-index:60;left:50%;transform:translateX(-50%);top:calc(14px + env(safe-area-inset-top,0px));padding:12px 18px;border-radius:999px;background:rgba(13,39,49,.92);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid var(--line);font-weight:700;font-size:14px;max-width:calc(100% - 32px)}
-.spin{width:18px;height:18px;border-radius:50%;border:2px solid rgba(94,234,212,.3);border-top-color:var(--accent);animation:spin .8s linear infinite}
+.toast{position:fixed;z-index:60;left:50%;transform:translateX(-50%);top:calc(14px + env(safe-area-inset-top,0px));padding:12px 18px;border-radius:999px;background:var(--toast);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid var(--line);font-weight:700;font-size:14px;max-width:calc(100% - 32px)}
+.spin{width:18px;height:18px;border-radius:50%;border:2px solid var(--accent-soft);border-top-color:var(--accent);animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.swatches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.swatch{display:flex;align-items:center;gap:10px;min-height:56px;padding:8px 10px;border-radius:18px;border:1px solid var(--field-line);background:var(--field);font-weight:700;font-size:14px;text-align:left}
+.swatch[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.swatch .sw{width:36px;height:36px;flex:none;border-radius:12px;position:relative;border:1px solid rgba(255,255,255,.25)}
+.swatch .sw i{position:absolute;right:5px;bottom:5px;width:10px;height:10px;border-radius:5px}
+.icons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.iconpick{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px 0;background:none;border:0;color:var(--muted)}
+.iconpick img{width:60px;height:60px;border-radius:14px;box-shadow:0 6px 14px var(--shadow)}
+.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:12px;font-size:14px}
+.steps li{display:flex;flex-direction:column;gap:8px}
+.copybox{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:14px;border:1px solid var(--field-line);background:var(--field)}
+.copybox span{flex:1;min-width:0;overflow-wrap:anywhere}
 .goalring{width:56px;height:56px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
 .goalring span{width:44px;height:44px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
 </style>
@@ -484,7 +536,7 @@ function viewGoals() {
     const mLeft = g.due ? monthDiff(cur, g.due) : 0;
     const per = left <= 0 ? 'Goal reached' : g.due ? (mLeft > 0 ? `Save ${money(left / mLeft)} a month to reach it by ${monthName(g.due).name.slice(0,3)} ${monthName(g.due).year}` : `Due now: ${money(left)} to go`) : `${money(left)} to go`;
     return `<section class="glass card"><div class="row">
-      <div class="goalring" style="background:conic-gradient(var(--accent) 0 ${Math.round(p*360)}deg, rgba(255,255,255,.12) ${Math.round(p*360)}deg 360deg)" role="img" aria-label="${Math.round(p*100)} percent saved"><span class="num">${Math.round(p*100)}%</span></div>
+      <div class="goalring" style="background:conic-gradient(var(--accent) 0 ${Math.round(p*360)}deg, var(--track) ${Math.round(p*360)}deg 360deg)" role="img" aria-label="${Math.round(p*100)} percent saved"><span class="num">${Math.round(p*100)}%</span></div>
       <div style="flex:1;min-width:0"><div class="h2" style="overflow-wrap:anywhere">${esc(g.name)}</div><div class="small muted num">${money(g.saved)} of ${money(g.target)}</div></div></div>
       <div class="small">${esc(per)}</div>
       <div class="row"><button type="button" class="btn primary" style="flex:1" data-act="goaladd" data-id="${esc(g.id)}">Add money</button><button type="button" class="btn" data-act="goaledit" data-id="${esc(g.id)}">Edit</button></div></section>`;
@@ -523,9 +575,49 @@ function viewMore() {
     <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file (CSV)${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
   </div></section>
-  <div class="status"><span class="led ${st[0]}" aria-hidden="true"></span>${st[1]}</div>
-  <section class="glass card"><div class="h2">Add to your iPhone home screen</div>
-    <div class="note">Open this page in Safari. Tap Share, then Add to Home Screen. The app then opens from its own icon.</div></section>`;
+  <section class="glass card" aria-label="Colour theme"><div class="h2">Colour theme</div>
+    <div class="swatches">${SKINS.map(k => `<button type="button" class="swatch" data-act="skin" data-v="${k.id}" aria-pressed="${currentSkin() === k.id}">
+      <span class="sw" aria-hidden="true" style="background:radial-gradient(circle at 30% 30%, ${k.b1}, transparent 70%),radial-gradient(circle at 75% 75%, ${k.b2}, transparent 70%),${k.bg}"><i style="background:${k.accent}"></i></span>
+      <span>${k.name}</span></button>`).join('')}</div></section>
+  <section class="glass card" aria-label="App icon"><div class="h2">App icon</div>
+    <div class="icons">${SKINS.map(k => `<button type="button" class="iconpick" data-act="icon" data-v="${k.id}" aria-label="${k.name} icon"><img src="${iconFile(k.id)}" alt="" width="60" height="60"><span class="tiny">${k.name}</span></button>`).join('')}</div>
+    <div class="note">iPhone sets the icon when you add the app to your home screen. Pick one to see how to switch.</div></section>
+  <div class="status"><span class="led ${st[0]}" aria-hidden="true"></span>${st[1]}</div>`;
+}
+const SKINS = [
+  { id: 'lagoon', name: 'Deep Lagoon', bg: '#071A24', b1: '#0F7C78', b2: '#1E4FA8', accent: '#5EEAD4' },
+  { id: 'ember', name: 'Plum Ember', bg: '#1A0F1F', b1: '#B8476A', b2: '#6B2E8F', accent: '#FF9E7A' },
+  { id: 'gold', name: 'Midnight Gold', bg: '#0E0E16', b1: '#3B2F6B', b2: '#8A6A1F', accent: '#F5C451' },
+  { id: 'sage', name: 'Sage Light', bg: '#EEF0E6', b1: '#A8C3A0', b2: '#E9C79B', accent: '#2F5D46' }
+];
+const iconFile = id => id === 'lagoon' ? 'icon-180.png' : `icon-${id}-180.png`;
+const currentSkin = () => document.documentElement.getAttribute('data-skin') || 'lagoon';
+const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+function applySkin(id) {
+  const k = SKINS.find(x => x.id === id) || SKINS[0];
+  if (k.id === 'lagoon') document.documentElement.removeAttribute('data-skin'); else document.documentElement.setAttribute('data-skin', k.id);
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.setAttribute('content', k.bg);
+  storeSet('lf-skin', k.id);
+}
+function openIconSheet(id) {
+  const k = SKINS.find(x => x.id === id) || SKINS[0];
+  const url = location.origin + location.pathname + (k.id === 'lagoon' ? '' : '?icon=' + k.id);
+  const head = `${sheetHead(k.name + ' icon')}<div class="row" style="justify-content:center"><img src="${iconFile(k.id)}" alt="" width="96" height="96" style="border-radius:22px"></div>`;
+  if (!isStandalone()) {
+    document.querySelector('link[rel=apple-touch-icon]').setAttribute('href', iconFile(k.id));
+    try { history.replaceState(null, '', url); } catch {}
+    openSheet(`${head}<div class="note">This icon is ready. Tap Share, then Add to Home Screen.</div><button type="button" class="btn primary block" data-act="close">Done</button>`, { kind: 'icon' });
+    return;
+  }
+  openSheet(`${head}
+  <div class="note">Your iPhone only reads the icon when you add the app. Each home screen copy also keeps its own data, so move it with a backup.</div>
+  <ol class="steps">
+    <li><div>Save a backup file.</div><button type="button" class="btn block" data-act="exportjson">${I.save} Save backup file</button></li>
+    <li><div>Copy this link and open it in Safari.</div><div class="copybox"><span class="small num" id="iconurl">${esc(url)}</span><button type="button" class="btn" data-act="copyurl">Copy</button></div></li>
+    <li><div>In Safari, tap Share, then Add to Home Screen.</div></li>
+    <li><div>Open the new icon. Go to More, then Backup and restore, and restore your file.</div></li>
+    <li><div>Remove the old icon. Hold it, then tap Remove App.</div></li>
+  </ol>`, { kind: 'icon', url });
 }
 
 function render() {
@@ -750,13 +842,13 @@ function openSettings() {
 }
 function openCategories() {
   const block = type => `<div class="h2">${type === 'income' ? 'Income' : 'Expense'} categories</div>
-    <div class="list">${config[type].map((c, i) => `<div class="row between" style="min-height:48px;border-bottom:1px solid rgba(255,255,255,.07)"><span>${esc(c.name)}</span><button type="button" class="link" style="color:var(--over)" data-act="catdel" data-type="${type}" data-i="${i}" aria-label="Remove ${esc(c.name)}">Remove</button></div>`).join('')}</div>
+    <div class="list">${config[type].map((c, i) => `<div class="row between" style="min-height:48px;border-bottom:1px solid var(--divider)"><span>${esc(c.name)}</span><button type="button" class="link" style="color:var(--over)" data-act="catdel" data-type="${type}" data-i="${i}" aria-label="Remove ${esc(c.name)}">Remove</button></div>`).join('')}</div>
     <div class="row"><input class="input" id="newcat-${type}" placeholder="New ${type} category" style="flex:1"><button type="button" class="btn" data-act="catadd" data-type="${type}">Add</button></div>`;
   const rules = Object.entries(config.rules || {});
   openSheet(`${sheetHead('Categories')}${block('expense')}${block('income')}
   <div class="h2">Store rules</div>
   <div class="note">The app learns these when you save a transaction. A matching store gets the same category next time.</div>
-  ${rules.length ? `<div class="list">${rules.map(([k, v]) => `<div class="row between" style="min-height:44px;border-bottom:1px solid rgba(255,255,255,.07)"><span class="small" style="min-width:0;overflow-wrap:anywhere">${esc(k.slice(2))} → ${esc(v)}</span><button type="button" class="link" style="color:var(--over)" data-act="ruledel" data-k="${esc(k)}">Forget</button></div>`).join('')}</div>` : '<div class="note">No store rules yet.</div>'}`, { kind: 'cats' });
+  ${rules.length ? `<div class="list">${rules.map(([k, v]) => `<div class="row between" style="min-height:44px;border-bottom:1px solid var(--divider)"><span class="small" style="min-width:0;overflow-wrap:anywhere">${esc(k.slice(2))} → ${esc(v)}</span><button type="button" class="link" style="color:var(--over)" data-act="ruledel" data-k="${esc(k)}">Forget</button></div>`).join('')}</div>` : '<div class="note">No store rules yet.</div>'}`, { kind: 'cats' });
 }
 
 /* CSV import */
@@ -939,6 +1031,9 @@ document.addEventListener('click', async e => {
     case 'import': openImport(); break;
     case 'importgo': runImport(); break;
     case 'backup': openBackup(); break;
+    case 'skin': applySkin(el.dataset.v); if (config.skin !== el.dataset.v) { config.skin = el.dataset.v; saveConfig(); } render(); break;
+    case 'icon': openIconSheet(el.dataset.v); break;
+    case 'copyurl': { const u = sheetCtx && sheetCtx.url; try { await navigator.clipboard.writeText(u); toast('Link copied'); } catch { const r = document.createRange(); r.selectNodeContents($('iconurl')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Link selected. Tap Copy.'); } break; }
     case 'exportjson': exportJSON(); break;
     case 'exportcsv': exportCSV(); break;
     case 'restorego': runRestore(); break;
