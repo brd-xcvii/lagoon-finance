@@ -954,13 +954,19 @@ function parseBankShot(tsv, W, todayIso) {
   L.sort((a, b) => a.y0 - b.y0); amts.sort((a, b) => a.y - b.y);
   const allLines = words.map(ws => ({ text: ws.map(w => w.text).join(' '), y0: Math.min(...ws.map(w => w.y0)) })).sort((a, b) => a.y0 - b.y0);
   // header: account name, number and balances
-  const acc = { name: '', last4: '', balance: null, available: null, pending: null };
+  const acc = { name: '', last4: '', balance: null, available: null, pending: null, kind: '', owing: null, due: '' };
+  const nextMoney = i => { const m = /-?\$[\d,]+\.\d{2}/.exec(String(full[i + 1] || '').replace(/\s+/g, '')); return m ? shotMoney(m[0]) : null; };
   const full = allLines.map(l => l.text);
   for (let i = 0; i < full.length; i++) {
     const t = full[i];
     let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{6}\s*(\d{4})\b/.exec(t) || /(?:ending(?:\s+in)?|card\s*(?:no\.?|number)?|xx|[\u2022*]{2,})\s*(\d{4})\b/i.exec(t); if (m && !acc.last4) acc.last4 = m[1];
     m = /^balance\s*(-?\$[\d,]+\.\d{2})/i.exec(t.replace(/\s+/g, ' ')); if (m && acc.balance == null) acc.balance = shotMoney(m[1]);
     m = /^pending\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.pending == null) acc.pending = shotMoney(m[1]);
+    if (/^balance$/i.test(t.trim()) && acc.balance == null) acc.balance = nextMoney(i);
+    if (/\bpay card\b|adjust limit|total owing|credit limit|minimum payment/i.test(t)) acc.kind = 'card';
+    if (/total owing|closing balance|statement balance/i.test(t) && acc.owing == null) { const v = /\$[\d,]+\.\d{2}/.exec(t); acc.owing = v ? shotMoney(v[0]) : nextMoney(i); }
+    m = /\bdue\s+(?:date\s+)?(\d{1,2})\s+([a-z]{3})\w*(?:\s+(\d{4}))?/i.exec(t);
+    if (m && !acc.due) { const mo = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(m[2].toLowerCase()); if (mo >= 0) { const nowD = new Date(todayIso + 'T00:00:00'); let y = m[3] ? +m[3] : nowD.getFullYear(); let d = new Date(y, mo, +m[1]); if (!m[3] && d - nowD > 200 * 86400000) d = new Date(y - 1, mo, +m[1]); if (!m[3] && nowD - d > 165 * 86400000) d = new Date(y + 1, mo, +m[1]); acc.due = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; } }
     if (/^available(\s+(balance|credit))?$/i.test(t.trim()) && acc.available == null) { const n = (full[i + 1] || '').replace(/\s+/g, ''); if (SHOT_MONEY.test(n)) acc.available = shotMoney(n); }
     m = /^available\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.available == null) acc.available = shotMoney(m[1]);
   }
@@ -1074,7 +1080,7 @@ function openShotImport(results) {
 async function runShotImport() {
   const ctx = sheetCtx, touched = new Set();
   config.accounts = config.accounts || {};
-  for (const a of ctx.accounts) { const k = a.last4 || a.name, old = config.accounts[k] || {}; config.accounts[k] = { ...old, name: old.nameSet ? old.name : (a.name || old.name || 'Account'), last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), at: Date.now() }; }
+  for (const a of ctx.accounts) { const k = a.last4 || a.name, old = config.accounts[k] || {}; config.accounts[k] = { ...old, name: old.nameSet ? old.name : (a.name || old.name || 'Account'), last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), ...(a.kind && !old.kindSet ? { kind: a.kind } : {}), ...(a.owing != null ? { owing: a.owing } : {}), ...(a.due ? { due: a.due } : {}), at: Date.now() }; }
   const fresh = ctx.items.filter(t => !t.dup);
   for (const t of ctx.items) if (t.dup && t.clears) { const o = allTx().find(x => x.id === t.clears); if (o) { o.pending = false; touched.add(o.date.slice(0, 7)); } }
   if (fresh.length) {
@@ -1107,7 +1113,7 @@ function viewAccounts() {
   const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   return `<section class="glass card" aria-label="Accounts">
     <div class="row between"><div class="h2">Accounts</div><button type="button" class="link" data-act="shots">Update</button></div>
-    ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div></div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
+    ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div>${x.due && x.owing ? (x.due < isoDate(today()) ? `<div class="tiny" style="color:var(--over);font-weight:700">${money(x.owing)} overdue since ${esc(shortDay(x.due))}</div>` : `<div class="tiny muted">${money(x.owing)} due ${esc(shortDay(x.due))}</div>`) : ''}</div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
     <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total in bank accounts</span><span class="num" style="font-weight:700">${money(total)}${avail ? ` <span class="muted">(${money(avail)} available)</span>` : ''}</span></div></section>`;
 }
 
@@ -1989,7 +1995,7 @@ document.addEventListener('click', async e => {
     case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
     case 'shots': openShots(); break;
     case 'acctedit': openAcct(el.dataset.k); break;
-    case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
+    case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, kindSet: true, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
     case 'acctdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; } delete config.accounts[sheetCtx.k]; closeSheet(); render(); await saveConfig(); toast('Account removed'); break;
     case 'shotgo': runShotImport(); break;
     case 'billsimportgo': { const bs = sheetCtx.bills || [], rm = (sheetCtx.removals || []).map(n => n.toLowerCase()); config.recurring = config.recurring.filter(r => !rm.includes(r.name.toLowerCase())); for (const b of bs) { const ex = config.recurring.find(r => r.name.toLowerCase() === b.name.toLowerCase()); if (ex) { Object.assign(ex, b); delete ex.day; delete ex.start; } else config.recurring.push({ id: uid(), ...b, skip: [] }); } closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
