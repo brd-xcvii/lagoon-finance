@@ -85,9 +85,12 @@ button{cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--glass-2);color:var(--fg);box-shadow:inset 0 1px 0 var(--hi)}
 .field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .field label{font-size:13px;font-weight:700;color:var(--muted)}
-.input{width:100%;min-height:48px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line);background:rgba(0,0,0,.22);font-size:16px}
+.input{display:block;width:100%;min-width:0;max-width:100%;height:48px;margin:0;padding:0 14px;-webkit-appearance:none;appearance:none;line-height:normal;border-radius:var(--r-sm);border:1px solid var(--line);background:rgba(0,0,0,.22);font-size:16px}
 select.input{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 20px) 21px,calc(100% - 15px) 21px;background-size:5px 5px;background-repeat:no-repeat;padding-right:36px}
-.amount-input{font-size:34px;font-weight:800;min-height:64px;text-align:center}
+.amount-input{font-size:34px;font-weight:800;height:64px;text-align:center}
+input[type=date].input,input[type=month].input{line-height:46px;text-align:left}
+input[type=date].input::-webkit-date-and-time-value,input[type=month].input::-webkit-date-and-time-value{text-align:left;margin:0;min-height:46px;line-height:46px}
+input[type=date].input::-webkit-calendar-picker-indicator{filter:invert(.8)}
 .alert{display:flex;align-items:center;gap:10px;font-size:14px}
 .dot{width:8px;height:8px;border-radius:4px;flex:none;background:var(--warn)} .dot.over{background:var(--over)}
 .planinput{width:96px;min-height:40px;padding:0 10px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.22);text-align:right;font-size:16px}
@@ -122,8 +125,8 @@ nav.tabs button[aria-current="page"]{background:var(--glass-2);color:var(--accen
 nav.tabs .add{width:58px;height:58px;border-radius:29px;background:var(--accent);color:var(--accent-ink);box-shadow:0 8px 20px rgba(0,0,0,.3)}
 nav.tabs .add:disabled{opacity:.5}
 
-.scrim{position:fixed;inset:0;z-index:40;background:rgba(2,10,14,.55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.sheet{position:fixed;z-index:41;left:50%;transform:translateX(-50%);bottom:0;width:min(560px,100%);max-height:calc(100% - 24px - env(safe-area-inset-top,0px));overflow-y:auto;border-radius:30px 30px 0 0;background:rgba(13,39,49,.88);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);border:1px solid var(--line);border-bottom:0;box-shadow:inset 0 1px 0 var(--hi);padding:10px max(18px,env(safe-area-inset-left,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(2,10,14,.55);box-shadow:0 160px 0 0 rgba(2,10,14,.55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.sheet{position:fixed;z-index:41;left:50%;transform:translateX(-50%);bottom:0;width:min(560px,100%);max-height:calc(100% - 24px - env(safe-area-inset-top,0px));overflow-y:auto;border-radius:30px 30px 0 0;background:rgba(13,39,49,.88);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);border:1px solid var(--line);border-bottom:0;box-shadow:inset 0 1px 0 var(--hi),0 160px 0 0 var(--sheet);padding:10px max(18px,env(safe-area-inset-left,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
 .grab{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.25);align-self:center}
 .scan{display:flex;align-items:center;justify-content:center;gap:10px;min-height:52px;border-radius:18px;border:1px dashed rgba(94,234,212,.5);background:var(--accent-soft);color:var(--accent);font-weight:700}
 .scan input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
@@ -228,7 +231,7 @@ let months = {};                 // 'YYYY-MM' -> [tx]
 let mode = 'wait';               // 'wait' | 'db' | 'local'
 let ocrWorker = null;
 let gotConfig = false, gotMonths = false, recurringDone = false;
-const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all' };
+const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all' };
 
 /* ---------- persistence ---------- */
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -277,14 +280,29 @@ function startBalance(key) {
 }
 function endBalance(key) { const s = startBalance(key); return s == null ? null : round2(s + totals(key).net); }
 function catActual(key, type, name) { let s = 0; for (const t of txOf(key)) if (t.type === type && t.cat === name) s += +t.amount || 0; return round2(s); }
-function catRows(key, type) {
-  const list = config[type === 'income' ? 'income' : 'expense'];
-  const names = list.map(c => c.name);
-  const extra = [...new Set(txOf(key).filter(t => t.type === type && !names.includes(t.cat)).map(t => t.cat))];
-  return [...list.map((c, i) => ({ name: c.name, planned: +c.planned || 0, idx: i })), ...extra.map(n => ({ name: n, planned: 0, idx: -1 }))]
-    .map(r => { const actual = catActual(key, type, r.name); const pct = r.planned > 0 ? actual / r.planned : 0; return { ...r, actual, pct, diff: round2(r.planned - actual), status: r.planned > 0 ? (pct > 1 ? 'over' : pct >= 0.8 ? 'warn' : 'ok') : 'none' }; });
+/* periods: a calendar month, or a Monday to Sunday week. Weekly plans are 12/52 of the monthly plan. */
+const WEEK_FACTOR = 12 / 52;
+function addDaysIso(iso, n) { const [y, m, d] = iso.split('-').map(Number); return isoDate(new Date(y, m - 1, d + n)); }
+function weekStartOf(iso) { const [y, m, d] = iso.split('-').map(Number); const wd = (new Date(y, m - 1, d).getDay() + 6) % 7; return isoDate(new Date(y, m - 1, d - wd)); }
+function monthPeriod(k) { return { kind: 'month', from: `${k}-01`, to: `${k}-${pad(daysIn(k))}`, factor: 1 }; }
+function curPeriod() { return ui.period === 'week' ? { kind: 'week', from: ui.week, to: addDaysIso(ui.week, 6), factor: WEEK_FACTOR } : monthPeriod(ui.month); }
+function txRange(p) { const out = []; for (let k = p.from.slice(0, 7); k <= p.to.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date >= p.from && t.date <= p.to) out.push(t); return out; }
+function totalsP(p) { let inc = 0, exp = 0; for (const t of txRange(p)) { if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; } return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp) }; }
+function balanceAt(iso) {
+  const s = `${config.startMonth}-01`; if (iso < s) return null;
+  let b = +config.startingBalance || 0;
+  for (let k = config.startMonth; k <= iso.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date <= iso) b += t.type === 'income' ? +t.amount || 0 : -(+t.amount || 0);
+  return round2(b);
 }
-function alertsFor(key) { return catRows(key, 'expense').filter(r => r.status === 'warn' || r.status === 'over').sort((a, b) => b.pct - a.pct); }
+function periodStartBalance(p) { const s = `${config.startMonth}-01`; if (p.to < s) return null; return p.from <= s ? round2(+config.startingBalance || 0) : balanceAt(addDaysIso(p.from, -1)); }
+function catRows(p, type) {
+  const list = config[type === 'income' ? 'income' : 'expense'];
+  const names = list.map(c => c.name), tx = txRange(p).filter(t => t.type === type);
+  const extra = [...new Set(tx.filter(t => !names.includes(t.cat)).map(t => t.cat))];
+  return [...list.map((c, i) => ({ name: c.name, planned: round2((+c.planned || 0) * p.factor), idx: i })), ...extra.map(n => ({ name: n, planned: 0, idx: -1 }))]
+    .map(r => { const actual = round2(tx.filter(t => t.cat === r.name).reduce((a, t) => a + (+t.amount || 0), 0)); const pct = r.planned > 0 ? actual / r.planned : 0; return { ...r, actual, pct, diff: round2(r.planned - actual), status: r.planned > 0 ? (pct > 1 ? 'over' : pct >= 0.8 ? 'warn' : 'ok') : 'none' }; });
+}
+function alertsFor(p) { return catRows(p, 'expense').filter(r => r.status === 'warn' || r.status === 'over').sort((a, b) => b.pct - a.pct); }
 function avgPositive(arr) { const p = arr.filter(v => v > 0); return p.length ? p.reduce((a, b) => a + b, 0) / p.length : 0; }
 
 /* ---------- auto categories ---------- */
@@ -368,21 +386,37 @@ function loadingNote() {
   return mode === 'wait' ? `<div class="status"><span class="spin" aria-hidden="true"></span>Loading your saved data…</div>` : '';
 }
 
+function periodBar() {
+  const p = curPeriod(), wk = p.kind === 'week';
+  let top, title;
+  if (wk) {
+    const f = new Date(p.from + 'T00:00:00'), t = new Date(p.to + 'T00:00:00');
+    const o = { day: 'numeric', month: 'short' };
+    top = `Week · ${t.getFullYear()}`; title = `${f.toLocaleDateString('en-AU', o)} – ${t.toLocaleDateString('en-AU', o)}`;
+  } else { const { name, year } = monthName(ui.month); top = String(year); title = name; }
+  return `<div class="seg" role="group" aria-label="View by"><button type="button" data-act="period" data-v="month" aria-pressed="${!wk}">Month</button><button type="button" data-act="period" data-v="week" aria-pressed="${wk}">Week</button></div>
+  <div class="row between">
+    <button type="button" class="iconbtn" data-act="month" data-d="-1" aria-label="Previous ${wk ? 'week' : 'month'}">${I.left}</button>
+    <div style="text-align:center;min-width:0"><div class="label">${top}</div><h1 class="h1 num">${title}</h1></div>
+    <button type="button" class="iconbtn" data-act="month" data-d="1" aria-label="Next ${wk ? 'week' : 'month'}">${I.right}</button></div>`;
+}
 function viewHome() {
-  const k = ui.month, tt = totals(k), sb = startBalance(k), eb = endBalance(k);
-  const plannedInc = config.income.reduce((a, c) => a + (+c.planned || 0), 0);
-  const plannedExp = config.expense.reduce((a, c) => a + (+c.planned || 0), 0);
-  const rows = catRows(k, 'expense').filter(r => r.planned > 0 || r.actual > 0).sort((a, b) => (b.pct - a.pct) || (b.actual - a.actual)).slice(0, 5);
-  const alerts = alertsFor(k);
-  const tx = [...txOf(k)].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
-  const due = k === mk(today()) ? dueSoon().slice(0, 3) : [];
+  const p = curPeriod(), wk = p.kind === 'week', word = wk ? 'week' : 'month';
+  const tt = totalsP(p), sb = periodStartBalance(p), eb = p.to < `${config.startMonth}-01` ? null : balanceAt(p.to);
+  const plannedInc = round2(config.income.reduce((a, c) => a + (+c.planned || 0), 0) * p.factor);
+  const plannedExp = round2(config.expense.reduce((a, c) => a + (+c.planned || 0), 0) * p.factor);
+  const rows = catRows(p, 'expense').filter(r => r.planned > 0 || r.actual > 0).sort((a, b) => (b.pct - a.pct) || (b.actual - a.actual)).slice(0, 5);
+  const alerts = alertsFor(p);
+  const tx = txRange(p).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+  const now = isoDate(today());
+  const due = (now >= p.from && now <= p.to) ? dueSoon().slice(0, 3) : [];
   const saved = tt.net >= 0;
-  return `${loadingNote()}${monthNav('month')}
+  return `${loadingNote()}${periodBar()}
   <section class="glass card" aria-label="Balance">
-    <div class="small muted" style="font-weight:600">Ending balance</div>
+    <div class="small muted" style="font-weight:600">Balance at end of ${word}</div>
     <div class="big num">${eb == null ? '—' : money(eb)}</div>
     <div class="row" style="flex-wrap:wrap">
-      <span class="chip ${saved ? '' : 'over'} num">${saved ? '+' + money(tt.net) + ' saved this month' : '−' + money(-tt.net) + ' spent beyond income'}</span>
+      <span class="chip ${saved ? '' : 'over'} num">${saved ? '+' + money(tt.net) + ' saved this ' + word : '−' + money(-tt.net) + ' spent beyond income'}</span>
       <span class="small muted num">${sb == null ? 'Before your start month' : 'Started at ' + money(sb)}</span>
     </div>
     ${!config.startingBalance && mode !== 'wait' ? `<button type="button" class="link" style="align-self:flex-start" data-act="settings">Set your starting balance</button>` : ''}
@@ -395,13 +429,13 @@ function viewHome() {
   <section class="glass card" aria-label="Planned versus actual">
     <div class="row between"><div class="h2">Planned vs actual</div><button type="button" class="link" data-act="tab" data-tab="plan">All categories</button></div>
     ${rows.length ? rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money0(r.actual)} / ${r.planned ? money0(r.planned) : 'no plan'}</span></div>${statusBar(r)}</div>`).join('')
-      : `<div class="note">Set a monthly plan for each category in Plan. Your spending fills these bars as you add transactions.</div>`}
+      : `<div class="note">Set a plan for each category in Plan. Your spending fills these bars as you add transactions.</div>`}
   </section>
   ${due.length ? `<section class="glass card" aria-label="Bills due soon"><div class="row between"><div class="h2">Due soon</div><button type="button" class="link" data-act="recurring">Manage</button></div>${due.map(({ r, date }) => `<div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="muted num">${money(r.amount)} · ${esc(prettyDay(date))}</span></div>`).join('')}</section>` : ''}
   ${config.goals.length ? `<section class="glass card" aria-label="Savings goals"><div class="row between"><div class="h2">Goals</div><button type="button" class="link" data-act="plantab" data-p="goals">View</button></div>${config.goals.slice(0,2).map(g => { const p = g.target > 0 ? Math.min(1, g.saved / g.target) : 0; return `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(g.name)}</span><span class="muted num">${money0(g.saved)} / ${money0(g.target)}</span></div><div class="bar"><i style="width:${Math.round(p*100)}%"></i></div></div>`; }).join('')}</section>` : ''}
   <section aria-label="Recent transactions" style="display:flex;flex-direction:column;gap:4px">
     <div class="row between" style="padding:0 4px"><div class="h2">Recent</div>${tx.length ? '<button type="button" class="link" data-act="tab" data-tab="activity">See all</button>' : ''}</div>
-    ${tx.length ? `<div class="list">${tx.map(txRow).join('')}</div>` : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No transactions in ${monthName(k).name}</div><div class="small">Tap + to add one or scan a receipt. You can also import your bank file from More.</div></div>`}
+    ${tx.length ? `<div class="list">${tx.map(txRow).join('')}</div>` : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No transactions this ${word}</div><div class="small">Tap + to add one or scan a receipt. You can also import your bank file from More.</div></div>`}
   </section>`;
 }
 
@@ -409,13 +443,13 @@ function viewActivity() {
   const q = ui.search.trim().toLowerCase();
   let list;
   if (q) list = Object.values(months).flat().filter(t => (t.desc + ' ' + t.cat).toLowerCase().includes(q) || String(t.amount).includes(q));
-  else list = [...txOf(ui.month)];
+  else list = txRange(curPeriod());
   if (ui.filter !== 'all') list = list.filter(t => t.type === ui.filter);
   list.sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
   const groups = []; let last = null;
   for (const t of list) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length-1].items.push(t); }
   const sum = list.reduce((a, t) => a + (t.type === 'income' ? +t.amount : -t.amount), 0);
-  return `${loadingNote()}${q ? `<h1 class="h1">Search results</h1>` : monthNav('month')}
+  return `${loadingNote()}${q ? `<h1 class="h1">Search results</h1>` : periodBar()}
   <div class="field"><label for="search">Search all transactions</label><input class="input" id="search" type="search" placeholder="Store, category or amount" value="${esc(ui.search)}" autocomplete="off"></div>
   <div class="seg" role="group" aria-label="Filter">
     ${['all','expense','income'].map(f => `<button type="button" data-act="filter" data-f="${f}" aria-pressed="${ui.filter === f}">${f === 'all' ? 'All' : f === 'expense' ? 'Expenses' : 'Income'}</button>`).join('')}
@@ -429,17 +463,18 @@ function viewPlan() {
   const tabs = `<div class="seg" role="group" aria-label="Plan views">${[['budget','Budget'],['goals','Goals'],['year','Year']].map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}">${l}</button>`).join('')}</div>`;
   if (ui.planTab === 'goals') return `${tabs}${viewGoals()}`;
   if (ui.planTab === 'year') return `${tabs}${viewYear()}`;
-  const k = ui.month;
+  const p = curPeriod(), wk = p.kind === 'week';
   const block = (type, title) => {
-    const rows = catRows(k, type);
+    const rows = catRows(p, type);
     const tp = rows.reduce((a, r) => a + r.planned, 0), ta = rows.reduce((a, r) => a + r.actual, 0);
     return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
       ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
         <div class="row between"><div style="min-width:0"><div style="font-weight:600">${esc(r.name)}</div><div class="tiny num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</div></div>
-        ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="Monthly plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" value="${r.planned || ''}" placeholder="$0">` : '<span class="tiny muted">Not in list</span>'}</div>
+        ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0">` : '<span class="tiny muted">Not in list</span>'}</div>
         ${type === 'expense' ? statusBar(r) : ''}</div>`).join('')}</section>`;
   };
-  return `${tabs}${monthNav('month')}<div class="note" style="padding:0 4px">Plans repeat every month. Bars turn orange at 80% and red when you go over.</div>${block('expense','Expenses')}${block('income','Income')}`;
+  const note = wk ? 'Weekly plans are your monthly plans spread over the year. Change one and the other updates.' : 'Plans repeat every month.';
+  return `${tabs}${periodBar()}<div class="note" style="padding:0 4px">${note} Bars turn orange at 80% and red when you go over.</div>${block('expense','Expenses')}${block('income','Income')}`;
 }
 
 function viewGoals() {
@@ -515,7 +550,7 @@ function sheetHead(title) { return `<div class="row between"><h2 class="h1" styl
 function catOptions(type, sel) {
   const list = (type === 'income' ? config.income : config.expense).map(c => c.name);
   if (sel && !list.includes(sel)) list.push(sel);
-  return `<option value="">Choose a category</option>` + list.map(n => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  return `<option value="">Choose</option>` + list.map(n => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('');
 }
 
 function openTxSheet(tx, prefill) {
@@ -867,7 +902,12 @@ document.addEventListener('click', async e => {
   const a = el.dataset.act;
   switch (a) {
     case 'tab': closeSheet(); ui.tab = el.dataset.tab; storeSet('lf-tab', ui.tab); render(); window.scrollTo(0, 0); break;
-    case 'month': ui.month = addMonths(ui.month, +el.dataset.d); render(); break;
+    case 'month': if (ui.period === 'week') { ui.week = addDaysIso(ui.week, 7 * +el.dataset.d); ui.month = ui.week.slice(0, 7); } else ui.month = addMonths(ui.month, +el.dataset.d); render(); break;
+    case 'period': {
+      const v = el.dataset.v; if (v === ui.period) break;
+      if (v === 'week') { const now = isoDate(today()); ui.week = weekStartOf(now.slice(0, 7) === ui.month ? now : `${ui.month}-01`); }
+      else ui.month = addDaysIso(ui.week, 3).slice(0, 7);
+      ui.period = v; storeSet('lf-period', v); render(); break; }
     case 'year': ui.year += +el.dataset.d; render(); break;
     case 'plantab': ui.tab = 'plan'; ui.planTab = el.dataset.p; render(); break;
     case 'filter': ui.filter = el.dataset.f; render(); break;
@@ -922,7 +962,7 @@ document.addEventListener('change', async e => {
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
   else if (el.id === 'restorefile' && el.files && el.files[0]) readBackup(el.files[0]);
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
-  else if (el.dataset.plan) { const v = parseMoney(el.value); config[el.dataset.plan][+el.dataset.i].planned = isFinite(v) ? Math.abs(round2(v)) : 0; render(); await saveConfig(); }
+  else if (el.dataset.plan) { const v = parseMoney(el.value); config[el.dataset.plan][+el.dataset.i].planned = isFinite(v) ? Math.abs(round2(v / (+el.dataset.f || 1))) : 0; render(); await saveConfig(); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); });
 
