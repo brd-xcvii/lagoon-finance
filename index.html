@@ -1447,8 +1447,11 @@ function dupChecker() {
   };
   return fn;
 }
+/* CommBank shows your own accounts as xx1234, so these lines are money moving between your accounts, not income or spending */
+const OWN_MOVE = /^(fast )?transfer (to|from) xx\d{4}\b|^payment received,? thank you/i;
 function importRows(ctx) {
   const isDup = dupChecker();
+  ctx.skippedOwn = 0;
   if (ctx.tracker) return ctx.tracker.map(t => ({ ...t, dup: isDup(t.date, t.amount, t.desc, t.type) }));
   const m = ctx.map, body = m.header ? ctx.rows.slice(1) : ctx.rows, out = [];
   for (const r of body) {
@@ -1458,6 +1461,7 @@ function importRows(ctx) {
     else { const d = Math.abs(parseMoney(r[m.debit])) || 0, c = Math.abs(parseMoney(r[m.credit])) || 0; v = c - d; }
     if (!isFinite(v) || v === 0) continue;
     const desc = String(r[m.desc] || '').replace(/\s+/g, ' ').trim() || 'Bank transaction';
+    if (m.own !== false && OWN_MOVE.test(desc)) { ctx.skippedOwn++; continue; }
     let type = v < 0 ? 'expense' : 'income';
     if (m.kind >= 0) { const k = String(r[m.kind] || '').toLowerCase(); if (/inc|credit|in\b/.test(k)) type = 'income'; else if (/exp|debit|out\b|spend/.test(k)) type = 'expense'; }
     const amount = round2(Math.abs(v));
@@ -1504,6 +1508,7 @@ function openImport(ctx) {
     : `<div class="grid2">${col('mp-debit', 'Money out', ctx.map.debit, true)}${col('mp-credit', 'Money in', ctx.map.credit, true)}</div>`}
   <div class="grid2">${col('mp-cat', 'Category', ctx.map.cat, true)}${col('mp-kind', 'Expense or income', ctx.map.kind, true)}</div>
   ${newCats.length ? `<div class="note">New categories to add: ${newCats.map(t => esc(t.cat)).join(', ')}.</div>` : ''}
+  <label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="mp-own" ${ctx.map.own !== false ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Skip transfers between my accounts and card repayments${ctx.skippedOwn ? ` (<span class="num">${ctx.skippedOwn}</span> skipped)` : ''}</span></label>
   <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app</span>${items.filter(t => t.takes && !t.dup).length ? ` · <span class="muted num">${items.filter(t => t.takes && !t.dup).length} pay recurring bills</span>` : ''}</div>
   <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found. Check the columns above.</div>'}</div>
   <div class="note">${ctx.map.cat >= 0 ? 'Categories come from your file. Empty ones are picked by the app.' : 'Items the app can\u2019t match go to Other.'} Fix any later and the app learns the store.</div>
@@ -1808,6 +1813,7 @@ document.addEventListener('change', async e => {
   else if (el.id === 'r-start' || el.id === 'r-freq') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
   else if (el.id === 'restorefile' && el.files && el.files[0]) readBackup(el.files[0]);
+  else if (el.id === 'mp-own' && sheetCtx && sheetCtx.kind === 'import') { sheetCtx.map.own = el.checked; openImport(sheetCtx); }
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
   else if (el.dataset.plan) { const v = parseMoney(el.value); config[el.dataset.plan][+el.dataset.i].planned = isFinite(v) ? Math.abs(round2(v / (+el.dataset.f || 1))) : 0; render(); await saveConfig(); }
 });
