@@ -238,7 +238,12 @@ nav.tabs .add:disabled{opacity:.5}
 
 /* ---------- constants ---------- */
 const EXP_DEFAULT = ['Food','Gifts','Health/Medical','Home','Transportation','Personal','Pets','Utilities','Travel','Debt','Insurance','Subscriptions','Investments','Other'];
-const INC_DEFAULT = ['Paycheck','Transfer From Savings','Interest','Dividends','Gifts','Repayment','Other'];
+const INC_DEFAULT = ['Paycheck','Transfer From Savings','Interest','Dividends','Gifts','Repayment','Borrowed','Other'];
+/* money from a loan or pay advance: it lands in your account but it isn't income, so it's kept out of income and savings */
+const BORROW_CAT = 'Borrowed';
+const LENDER_RE = /beforepay|wagetap|wage ?pay|wagego|\bewa payout|cash converters|jacaranda|credit corp|wallet ?wizard|wizit|power ?up|fundo|stay finance|myjuno|nimble|moneyme|cash train|\bdisb\b|disbursement|pay advance|loan (payout|advance)/i;
+const isBorrowed = t => t.type === 'income' && t.cat === BORROW_CAT;
+function lenderMatch(desc) { if (LENDER_RE.test(desc || '')) return true; for (const d of config.debts || []) { const re = debtRe(d); if (re && re.test(desc || '')) return true; } return false; }
 const KEYWORDS_EXP = [
   [/woolworths|coles|aldi|\biga\b|harris farm|foodworks|mcdonald|kfc|hungry jack|domino|uber\s*\*?\s*eats|menulog|doordash|cafe|coffee|bakery|restaurant|grill|pizza|sushi|bottle ?o|dan murphy|liquorland/i,'Food'],
   [/\bbp\b|shell|ampol|caltex|7-?eleven|7 eleven|united petrol|myki|\bptv\b|\buber\b(?!\s*\*?\s*eats)|didi|citylink|eastlink|linkt|parking|vicroads|tyre|mechanic/i,'Transportation'],
@@ -332,8 +337,23 @@ async function initStore() {
   afterLoad();
   if ('serviceWorker' in navigator && location.protocol === 'https:') { try { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}); navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window.__lfReloaded) { window.__lfReloaded = true; location.reload(); } }); } catch {} }
 }
+/* data fixes that run once per phone */
+function migrate() {
+  if ((+config.mig || 0) >= 2) return;
+  const touched = new Set();
+  if (!config.income.some(c => c.name === BORROW_CAT)) { const i = config.income.findIndex(c => c.name === 'Other'); config.income.splice(i < 0 ? config.income.length : i, 0, { name: BORROW_CAT, planned: 0 }); }
+  for (const k of Object.keys(months)) {
+    const n = months[k].length;
+    months[k] = months[k].filter(t => !(t.type === 'income' && /^repayment\/payment$/i.test(t.desc || '')));
+    if (months[k].length !== n) touched.add(k);
+    for (const t of months[k]) if (t.type === 'income' && t.cat !== 'Paycheck' && t.cat !== BORROW_CAT && lenderMatch(t.desc)) { t.cat = BORROW_CAT; touched.add(k); }
+  }
+  for (const r in config.rules) if (r.startsWith('i:') && LENDER_RE.test(r.slice(2))) config.rules[r] = BORROW_CAT;
+  config.mig = 2; saveLocal();
+}
 function afterLoad() {
   if (!(gotConfig && gotMonths)) return;
+  migrate();
   $('addBtn').disabled = false;
   if (!recurringDone) { recurringDone = true; applyRecurring(); }
   render();
@@ -343,8 +363,9 @@ function afterLoad() {
 const txOf = key => months[key] || [];
 function totals(key) {
   let inc = 0, exp = 0;
-  for (const t of txOf(key)) { if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; }
-  return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp) };
+  let borrowed = 0;
+  for (const t of txOf(key)) { if (isBorrowed(t)) borrowed += +t.amount || 0; else if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; }
+  return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp), borrowed: round2(borrowed) };
 }
 function startBalance(key) { return key < config.startMonth ? null : balanceAt(addDaysIso(`${key}-01`, -1)); }
 function endBalance(key) { return key < config.startMonth ? null : balanceAt(`${key}-${pad(daysIn(key))}`); }
@@ -356,12 +377,13 @@ function weekStartOf(iso) { const [y, m, d] = iso.split('-').map(Number); const 
 function monthPeriod(k) { return { kind: 'month', from: `${k}-01`, to: `${k}-${pad(daysIn(k))}`, factor: 1 }; }
 function curPeriod() { return ui.period === 'week' ? { kind: 'week', from: ui.week, to: addDaysIso(ui.week, 6), factor: WEEK_FACTOR } : monthPeriod(ui.month); }
 function txRange(p) { const out = []; for (let k = p.from.slice(0, 7); k <= p.to.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date >= p.from && t.date <= p.to) out.push(t); return out; }
-function totalsP(p) { let inc = 0, exp = 0; for (const t of txRange(p)) { if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; } return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp) }; }
-/* The app's balance: every account added together, with credit card balances taken off.
+function totalsP(p) { let inc = 0, exp = 0, borrowed = 0; for (const t of txRange(p)) { if (isBorrowed(t)) borrowed += +t.amount || 0; else if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; } return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp), borrowed: round2(borrowed) }; }
+/* The app's balance: money in your bank accounts, plus any credit card whose spending is in the app.
    Pinned to the latest bank balances you read in, then worked backwards and forwards with your transactions,
    so it can't drift away from the bank. With no balances read in, it runs on from the starting balance. */
+const cardTracked = x => { const k = x.last4 || x.name; return allTx().some(t => t.acct && t.acct === k); };
 function balanceAnchor() {
-  const list = Object.values(config.accounts || {}).filter(x => x.at && x.balance != null && isFinite(+x.balance)); if (!list.length) return null;
+  const list = Object.values(config.accounts || {}).filter(x => x.at && x.balance != null && isFinite(+x.balance) && (!isCardAcct(x) || cardTracked(x))); if (!list.length) return null;
   const date = isoDate(new Date(Math.max(...list.map(x => x.at))));
   let v = 0, cards = 0; for (const x of list) { v += +x.balance; if (isCardAcct(x)) cards += +x.balance; }
   // pending items are in the app already but not yet in the bank balance
@@ -394,6 +416,7 @@ function suggestCat(desc, type) {
   const key = normKey(desc); if (!key) return '';
   const rules = config.rules || {}; const prefix = type === 'income' ? 'i:' : 'e:';
   const names = (type === 'income' ? config.income : config.expense).map(c => c.name);
+  if (type === 'income' && lenderMatch(desc) && names.includes(BORROW_CAT)) return BORROW_CAT;
   if (rules[prefix + key] && names.includes(rules[prefix + key])) return rules[prefix + key];
   for (const r in rules) { if (r.startsWith(prefix) && r.length > 4 && key.includes(r.slice(2)) && names.includes(rules[r])) return rules[r]; }
   for (const [re, cat] of (type === 'income' ? KEYWORDS_INC : KEYWORDS_EXP)) if (re.test(desc) && names.includes(cat)) return cat;
@@ -521,7 +544,7 @@ function ordered(list, saved) { const ids = list.map(x => x[0]), o = (Array.isAr
 function viewHome() {
   const p = curPeriod(), wk = p.kind === 'week', word = wk ? 'week' : 'month';
   const tt = totalsP(p), sb = periodStartBalance(p), eb = p.to < `${config.startMonth}-01` ? null : balanceAt(p.to);
-  const plannedInc = round2(config.income.reduce((a, c) => a + (+c.planned || 0), 0) * p.factor);
+  const plannedInc = round2(config.income.filter(c => c.name !== BORROW_CAT).reduce((a, c) => a + (+c.planned || 0), 0) * p.factor);
   const plannedExp = round2(config.expense.reduce((a, c) => a + (+c.planned || 0), 0) * p.factor);
   const rows = catRows(p, 'expense').filter(r => r.planned > 0 || r.actual > 0).sort((a, b) => (b.pct - a.pct) || (b.actual - a.actual)).slice(0, 5);
   const alerts = alertsFor(p);
@@ -535,10 +558,11 @@ function viewHome() {
     accounts: () => viewAccounts(),
     month: () => `${periodBar()}
   <section class="glass card" aria-label="Balance">
-    <div class="small muted" style="font-weight:600">Balance at end of ${word}</div><div class="tiny muted" style="margin-top:-8px">All accounts, less credit card balances</div>
+    <div class="small muted" style="font-weight:600">Balance at end of ${word}</div><div class="tiny muted" style="margin-top:-8px">${balanceAnchor() ? (balanceAnchor().cards ? 'Bank accounts, less tracked card balances' : 'Money in your bank accounts') : 'From your starting balance'}</div>
     <div class="big num">${eb == null ? '—' : money(eb)}</div>
     <div class="row" style="flex-wrap:wrap">
       <span class="chip ${saved ? '' : 'over'} num">${saved ? '+' + money(tt.net) + ' saved this ' + word : '−' + money(-tt.net) + ' spent beyond income'}</span>
+      ${tt.borrowed ? `<span class="chip warn num">${money(tt.borrowed)} borrowed</span>` : ''}
       <span class="small muted num">${sb == null ? 'Before your start month' : 'Started at ' + money(sb)}</span>
     </div>
     ${!config.startingBalance && !balanceAnchor() && mode !== 'wait' ? `<button type="button" class="link" style="align-self:flex-start" data-act="settings">Set your starting balance</button>` : ''}
@@ -546,7 +570,7 @@ function viewHome() {
     alerts: () => alerts.length ? `<section class="glass card" aria-label="Budget alerts"><div class="h2">Budget alerts</div>${alerts.slice(0,4).map(r => `<div class="alert"><span class="dot ${r.status === 'over' ? 'over' : ''}" aria-hidden="true"></span><span style="flex:1">${esc(r.name)}</span><span class="chip ${r.status} num">${r.status === 'over' ? 'Over by ' + money(-r.diff) : Math.round(r.pct*100) + '% used'}</span></div>`).join('')}</section>` : '',
     weekly: () => viewWeekly(),
     totals: () => `<div class="grid2">
-    <section class="glass card" style="gap:4px;"><div class="tiny muted" style="font-weight:700">Income</div><div class="mid num">${money0(tt.inc)}</div><div class="tiny muted num">${plannedInc ? 'of ' + money0(plannedInc) + ' planned' : 'No plan set'}</div></section>
+    <section class="glass card" style="gap:4px;"><div class="tiny muted" style="font-weight:700">Income</div><div class="mid num">${money0(tt.inc)}</div><div class="tiny muted num">${plannedInc ? 'of ' + money0(plannedInc) + ' planned' : 'No plan set'}${tt.borrowed ? ` · ${money0(tt.borrowed)} borrowed not included` : ''}</div></section>
     <section class="glass card" style="gap:4px;"><div class="tiny muted" style="font-weight:700">Expenses</div><div class="mid num">${money0(tt.exp)}</div><div class="tiny muted num">${plannedExp ? 'of ' + money0(plannedExp) + ' planned' : 'No plan set'}</div></section>
   </div>`,
     planned: () => `<section class="glass card" aria-label="Planned versus actual">
@@ -596,7 +620,7 @@ function viewPlan() {
   const p = curPeriod(), wk = p.kind === 'week';
   const block = (type, title) => {
     const rows = catRows(p, type);
-    const tp = rows.reduce((a, r) => a + r.planned, 0), ta = rows.reduce((a, r) => a + r.actual, 0);
+    const real = rows.filter(r => !(type === 'income' && r.name === BORROW_CAT)), tp = real.reduce((a, r) => a + r.planned, 0), ta = real.reduce((a, r) => a + r.actual, 0);
     return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
       ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
         <div class="row between"><div style="min-width:0"><div style="font-weight:600">${esc(r.name)}</div><div class="tiny num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</div></div>
@@ -626,7 +650,7 @@ function viewYear() {
   const y = ui.year, keys = Array.from({ length: 12 }, (_, i) => `${y}-${pad(i+1)}`);
   const data = keys.map(k => ({ k, ...totals(k), end: endBalance(k) }));
   const maxV = Math.max(1, ...data.map(d => Math.max(d.inc, d.exp)));
-  const tInc = data.reduce((a, d) => a + d.inc, 0), tExp = data.reduce((a, d) => a + d.exp, 0);
+  const tInc = data.reduce((a, d) => a + d.inc, 0), tExp = data.reduce((a, d) => a + d.exp, 0), active = data.filter(d => d.inc || d.exp || d.borrowed), avgNet = active.length ? active.reduce((a, d) => a + d.net, 0) / active.length : 0;
   const cats = config.expense.map(c => { const vals = keys.map(k => catActual(k, 'expense', c.name)); return { name: c.name, total: vals.reduce((a, b) => a + b, 0), avg: avgPositive(vals) }; }).filter(c => c.total > 0).sort((a, b) => b.total - a.total);
   return `<div class="row between">
     <button type="button" class="iconbtn" data-act="year" data-d="-1" aria-label="Previous year">${I.left}</button>
@@ -638,8 +662,8 @@ function viewYear() {
     <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>Balance</th></tr></thead>
     <tbody>${data.map((d, i) => `<tr><td>${MONTHS[i].slice(0,3)}</td><td>${money0(d.inc)}</td><td>${money0(d.exp)}</td><td class="${d.net < 0 ? 'neg' : ''}">${money0(d.net)}</td><td class="${d.end != null && d.end < 0 ? 'neg' : ''}">${d.end == null || d.k > mk(today()) ? '—' : money0(d.end)}</td></tr>`).join('')}
     <tr class="total"><td>Total</td><td>${money0(tInc)}</td><td>${money0(tExp)}</td><td class="${tInc - tExp < 0 ? 'neg' : ''}">${money0(tInc - tExp)}</td><td></td></tr>
-    <tr class="total"><td>Average</td><td>${money0(avgPositive(data.map(d => d.inc)))}</td><td>${money0(avgPositive(data.map(d => d.exp)))}</td><td>${money0(avgPositive(data.map(d => d.net)))}</td><td></td></tr></tbody></table></div>
-    <div class="tiny muted">Averages count only months with activity.</div></section>
+    <tr class="total"><td>Average</td><td>${money0(avgPositive(data.map(d => d.inc)))}</td><td>${money0(avgPositive(data.map(d => d.exp)))}</td><td class="${avgNet < 0 ? 'neg' : ''}">${money0(avgNet)}</td><td></td></tr></tbody></table></div>
+    <div class="tiny muted">Averages count only months with activity.${data.some(d => d.borrowed) ? ` Income leaves out ${money0(data.reduce((a, d) => a + d.borrowed, 0))} borrowed from loans and pay advances. Balance includes it.` : ''}</div></section>
   ${cats.length ? `<section class="glass card"><div class="h2">Spending by category</div><div class="tablebox"><table><thead><tr><th>Category</th><th>Total</th><th>Monthly avg</th></tr></thead><tbody>${cats.map(c => `<tr><td>${esc(c.name)}</td><td>${money0(c.total)}</td><td>${money0(c.avg)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
 }
 
@@ -1031,7 +1055,8 @@ async function saveExtra() {
 function viewDebts() {
   const rows = debtRows(), now = isoDate(today());
   const total = round2(rows.reduce((a, r) => a + r.bal, 0)), weekly = round2(rows.reduce((a, r) => a + (r.bal > 0 ? r.weekly : 0), 0));
-  const anc = balanceAnchor(), cardAdj = anc ? anc.cards : 0, cash0 = balanceAt(now), cash = cash0 == null ? null : round2(cash0 - cardAdj), nw = cash == null ? null : round2(cash - total);
+  const inDebts = x => (config.debts || []).some(d => { const re = debtRe(d); return (re && re.test(x.name || '')) || (d.name || '').toLowerCase() === (x.name || '').toLowerCase(); });
+  const cardAdj = round2(Object.values(config.accounts || {}).filter(x => isCardAcct(x) && x.balance != null).reduce((a, x) => a + (cardTracked(x) ? (inDebts(x) ? +x.balance : 0) : (inDebts(x) ? 0 : -(+x.balance || 0))), 0)), cash0 = balanceAt(now), cash = cash0 == null ? null : round2(cash0 - cardAdj), nw = cash == null ? null : round2(cash - total);
   const ends = Array.from({ length: 12 }, (_, i) => { const k = addMonths(mk(today()), i - 11); return i === 11 ? now : `${k}-${pad(daysIn(k))}`; });
   const hist = ends.map(e => { const c = balanceAt(e); return c == null ? null : round2(c - cardAdj - (config.debts || []).reduce((a, d) => a + debtBalanceAt(d, e), 0)); });
   const vals = hist.filter(v => v != null), maxAbs = Math.max(1, ...vals.map(Math.abs));
@@ -1988,7 +2013,7 @@ function dupChecker() {
   return fn;
 }
 /* CommBank shows your own accounts as xx1234, so these lines are money moving between your accounts, not income or spending */
-const OWN_MOVE = /^(fast )?transfer (to|from) xx\d{4}\b|^payment received,? thank you/i;
+const OWN_MOVE = /^(fast )?transfer (to|from) xx\d{4}\b|^payment received,? thank you|^repayment\/payment$/i;
 function importRows(ctx) {
   const isDup = dupChecker();
   ctx.skippedOwn = 0;
@@ -2248,7 +2273,7 @@ async function runRestore() {
   const old = Object.keys(months);
   config = mergeConfig(p.config); months = {};
   for (const [k, v] of Object.entries(p.months)) if (/^\d{4}-\d{2}$/.test(k) && Array.isArray(v)) months[k] = v;
-  closeSheet(); render();
+  migrate(); closeSheet(); render();
   await saveConfig(); await saveMonths([...new Set([...old, ...Object.keys(months)])]);
   toast('Backup restored');
 }
