@@ -461,6 +461,9 @@ function periodBar() {
     <div style="text-align:center;min-width:0"><div class="label">${top}</div><h1 class="h1 num">${title}</h1></div>
     <button type="button" class="iconbtn" data-act="month" data-d="1" aria-label="Next ${wk ? 'week' : 'month'}">${I.right}</button></div>`;
 }
+const HOME_SECTIONS = [['safe', 'Safe to spend'], ['accounts', 'Accounts'], ['month', 'Month or week balance'], ['alerts', 'Budget alerts'], ['weekly', 'This week'], ['totals', 'Income and expenses'], ['planned', 'Planned vs actual'], ['due', 'Due soon'], ['goals', 'Goals'], ['recent', 'Recent']];
+const PLAN_TABS = [['budget', 'Budget'], ['goals', 'Goals'], ['debts', 'Debts'], ['trends', 'Trends'], ['year', 'Year']];
+function ordered(list, saved) { const ids = list.map(x => x[0]), o = (Array.isArray(saved) ? saved : []).filter(id => ids.includes(id)); return [...o, ...ids.filter(id => !o.includes(id))].map(id => list.find(x => x[0] === id)); }
 function viewHome() {
   const p = curPeriod(), wk = p.kind === 'week', word = wk ? 'week' : 'month';
   const tt = totalsP(p), sb = periodStartBalance(p), eb = p.to < `${config.startMonth}-01` ? null : balanceAt(p.to);
@@ -472,7 +475,10 @@ function viewHome() {
   const now = isoDate(today());
   const due = (now >= p.from && now <= p.to) ? dueSoon().slice(0, 3) : [];
   const saved = tt.net >= 0;
-  return `${loadingNote()}${viewSafe()}${viewAccounts()}${periodBar()}
+  const S = {
+    safe: () => viewSafe(),
+    accounts: () => viewAccounts(),
+    month: () => `${periodBar()}
   <section class="glass card" aria-label="Balance">
     <div class="small muted" style="font-weight:600">Balance at end of ${word}</div>
     <div class="big num">${eb == null ? '—' : money(eb)}</div>
@@ -481,24 +487,28 @@ function viewHome() {
       <span class="small muted num">${sb == null ? 'Before your start month' : 'Started at ' + money(sb)}</span>
     </div>
     ${!config.startingBalance && mode !== 'wait' ? `<button type="button" class="link" style="align-self:flex-start" data-act="settings">Set your starting balance</button>` : ''}
-  </section>
-  ${alerts.length ? `<section class="glass card" aria-label="Budget alerts"><div class="h2">Budget alerts</div>${alerts.slice(0,4).map(r => `<div class="alert"><span class="dot ${r.status === 'over' ? 'over' : ''}" aria-hidden="true"></span><span style="flex:1">${esc(r.name)}</span><span class="chip ${r.status} num">${r.status === 'over' ? 'Over by ' + money(-r.diff) : Math.round(r.pct*100) + '% used'}</span></div>`).join('')}</section>` : ''}
-  ${viewWeekly()}
-  <div class="grid2">
+  </section>`,
+    alerts: () => alerts.length ? `<section class="glass card" aria-label="Budget alerts"><div class="h2">Budget alerts</div>${alerts.slice(0,4).map(r => `<div class="alert"><span class="dot ${r.status === 'over' ? 'over' : ''}" aria-hidden="true"></span><span style="flex:1">${esc(r.name)}</span><span class="chip ${r.status} num">${r.status === 'over' ? 'Over by ' + money(-r.diff) : Math.round(r.pct*100) + '% used'}</span></div>`).join('')}</section>` : '',
+    weekly: () => viewWeekly(),
+    totals: () => `<div class="grid2">
     <section class="glass card" style="gap:4px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">Income</div><div class="mid num">${money0(tt.inc)}</div><div class="tiny muted num">${plannedInc ? 'of ' + money0(plannedInc) + ' planned' : 'No plan set'}</div></section>
     <section class="glass card" style="gap:4px;border-radius:var(--r-md)"><div class="tiny muted" style="font-weight:700">Expenses</div><div class="mid num">${money0(tt.exp)}</div><div class="tiny muted num">${plannedExp ? 'of ' + money0(plannedExp) + ' planned' : 'No plan set'}</div></section>
-  </div>
-  <section class="glass card" aria-label="Planned versus actual">
+  </div>`,
+    planned: () => `<section class="glass card" aria-label="Planned versus actual">
     <div class="row between"><div class="h2">Planned vs actual</div><button type="button" class="link" data-act="tab" data-tab="plan">All categories</button></div>
     ${rows.length ? rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money0(r.actual)} / ${r.planned ? money0(r.planned) : 'no plan'}</span></div>${statusBar(r)}</div>`).join('')
       : `<div class="note">Set a plan for each category in Plan. Your spending fills these bars as you add transactions.</div>`}
-  </section>
-  ${due.length ? `<section class="glass card" aria-label="Bills due soon"><div class="row between"><div class="h2">Due soon</div><button type="button" class="link" data-act="recurring">Manage</button></div>${due.map(({ r, date }) => `<div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="muted num">${money(r.amount)} · ${esc(prettyDay(date))}</span></div>`).join('')}</section>` : ''}
-  ${config.goals.length ? `<section class="glass card" aria-label="Savings goals"><div class="row between"><div class="h2">Goals</div><button type="button" class="link" data-act="plantab" data-p="goals">View</button></div>${config.goals.slice(0,2).map(g => { const p = g.target > 0 ? Math.min(1, g.saved / g.target) : 0; return `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(g.name)}</span><span class="muted num">${money0(g.saved)} / ${money0(g.target)}</span></div><div class="bar"><i style="width:${Math.round(p*100)}%"></i></div></div>`; }).join('')}</section>` : ''}
-  <section aria-label="Recent transactions" style="display:flex;flex-direction:column;gap:4px">
+  </section>`,
+    due: () => due.length ? `<section class="glass card" aria-label="Bills due soon"><div class="row between"><div class="h2">Due soon</div><button type="button" class="link" data-act="recurring">Manage</button></div>${due.map(({ r, date }) => `<div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="muted num">${money(r.amount)} · ${esc(prettyDay(date))}</span></div>`).join('')}</section>` : '',
+    goals: () => config.goals.length ? `<section class="glass card" aria-label="Savings goals"><div class="row between"><div class="h2">Goals</div><button type="button" class="link" data-act="plantab" data-p="goals">View</button></div>${config.goals.slice(0,2).map(g => { const p = g.target > 0 ? Math.min(1, g.saved / g.target) : 0; return `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(g.name)}</span><span class="muted num">${money0(g.saved)} / ${money0(g.target)}</span></div><div class="bar"><i style="width:${Math.round(p*100)}%"></i></div></div>`; }).join('')}</section>` : '',
+    recent: () => `<section aria-label="Recent transactions" style="display:flex;flex-direction:column;gap:4px">
     <div class="row between" style="padding:0 4px"><div class="h2">Recent</div>${tx.length ? '<button type="button" class="link" data-act="tab" data-tab="activity">See all</button>' : ''}</div>
     ${tx.length ? `<div class="list">${tx.map(txRow).join('')}</div>` : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No transactions this ${word}</div><div class="small">Tap + to add one or scan a receipt. You can also import your bank file from More.</div></div>`}
-  </section>`;
+  </section>`
+  };
+  const hidden = config.homeHidden || [];
+  return `${loadingNote()}${ordered(HOME_SECTIONS, config.homeOrder).filter(([id]) => !hidden.includes(id)).map(([id]) => S[id]()).join('\n')}
+  <button type="button" class="link" style="align-self:center;padding:8px" data-act="arrange">Arrange Home</button>`;
 }
 
 function viewActivity() {
@@ -522,7 +532,7 @@ function viewActivity() {
 }
 
 function viewPlan() {
-  const tabs = `<div class="seg" role="group" aria-label="Plan views">${[['budget','Budget'],['goals','Goals'],['debts','Debts'],['trends','Trends'],['year','Year']].map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}" style="font-size:13px;padding:0 2px">${l}</button>`).join('')}</div>`;
+  const tabs = `<div class="seg" role="group" aria-label="Plan views">${ordered(PLAN_TABS, config.planOrder).map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}" style="font-size:13px;padding:0 2px">${l}</button>`).join('')}</div>`;
   if (ui.planTab === 'goals') return `${tabs}${viewGoals()}`;
   if (ui.planTab === 'debts') return `${tabs}${viewDebts()}`;
   if (ui.planTab === 'trends') return `${tabs}${viewTrends()}`;
@@ -586,6 +596,7 @@ function viewMore() {
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
     <button type="button" data-act="categories"><span class="ic">${I.tag}</span>Categories and store rules${I.chev}</button>
     <button type="button" data-act="shots"><span class="ic">${I.cam}</span>Read bank screenshots${I.chev}</button>
+    <button type="button" data-act="arrange"><span class="ic">${I.repeat}</span>Arrange Home and Plan${I.chev}</button>
     <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file or spreadsheet${I.chev}</button>
     <button type="button" data-act="imports"><span class="ic">${I.repeat}</span>Import history<span class="small muted" style="margin-left:auto">${importGroups().length}</span>${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
@@ -688,13 +699,17 @@ function cashNow() {
   const b = balanceAt(now); return b == null ? null : { v: b, src: 'app' };
 }
 /* walk forward day by day: bills out, base pay in, and find the lowest point */
-function forecast() {
+function forecast(opt = {}) {
   const now = isoDate(today()), cash = cashNow(); if (!cash) return null;
   const pi = payInfo(), p1 = nextPayday(pi), p2 = addDaysIso(p1, pi.freq === 'fortnightly' ? 14 : 7);
-  const end = [p2, addDaysIso(now, 14)].sort().pop();
+  const end = opt.days ? addDaysIso(now, opt.days) : [p2, addDaysIso(now, 14)].sort().pop();
   const ev = billsBetween(now, end).map(b => ({ date: b.date, name: b.r.name, v: -(+b.r.amount || 0) }));
   if (cash.src === 'bank') for (const t of txOf(now.slice(0, 7))) if (t.date === now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
-  if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) ev.push({ date: d, name: 'Base pay', v: pi.base, pay: true });
+  const cs = opt.comm && opt.comm !== 'none' ? commissionStats() : null, seen = new Set();
+  if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) {
+    ev.push({ date: d, name: 'Base pay', v: pi.base, pay: true });
+    if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = opt.comm === 'avg' ? cs.avg : cs.low; if (v > 0) ev.push({ date: d, name: 'Commission (estimate)', v, pay: true }); }
+  }
   ev.sort((a, b) => a.date.localeCompare(b.date) || (a.pay ? 1 : 0) - (b.pay ? 1 : 0));
   let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
   for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
@@ -704,17 +719,66 @@ function forecast() {
 function viewSafe() {
   const f = forecast(); if (!f) return '';
   const short = f.low < 0, safe = Math.max(0, f.low), days = Math.max(1, dayDiff(isoDate(today()), f.end));
-  const src = f.cash.src === 'bank' ? `Your bank balances ${money(f.cash.v)} (available)` : `The app’s balance ${money(f.cash.v)}`;
-  return `<section class="glass card" aria-label="Safe to spend">
-    <div class="row between"><div class="small muted" style="font-weight:600">Safe to spend until ${esc(shortDay(f.end))}</div><button type="button" class="link" data-act="paysettings">Pay</button></div>
+  return `<section class="glass card" aria-label="Safe to spend" data-act="forecast" style="cursor:pointer">
+    <div class="row between"><div class="small muted" style="font-weight:600">Safe to spend until ${esc(shortDay(f.end))}</div><span class="link" style="pointer-events:none">Forecast ${I.chev}</span></div>
     <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-f.low) : money(safe)}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip ${short ? 'over' : ''} num">${short ? `Runs out ${esc(shortDay(f.neg.date))}` : `About ${money(safe / days)} a day`}</span>
     <span class="small muted num">Next pay ${esc(shortDay(f.p1))}${f.pi.base ? ' · ' + money0(f.pi.base) + ' base' : ''}</span></div>
-    ${short ? `<div class="note" style="color:var(--over)">Your money runs out on ${esc(shortDay(f.neg.date))} when ${esc(f.neg.name)} is due. At the lowest point, ${esc(shortDay(f.lowDate))}, you’re ${money(-f.low)} short. Base pay alone won’t cover these bills. Ask lenders to move dates, or plan where commission goes.</div>` : ''}
-    <div class="small muted num">${src}, plus base pay, minus ${money(f.billsTotal)} of bills over the next ${days} days. Commission is not counted.</div>
-    <details${short ? ' open' : ''}><summary class="small" style="cursor:pointer;font-weight:600">Day by day</summary>
-    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">${f.ev.map(e => `<div class="row between small" style="gap:8px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortDay(e.date).replace(/,.*/, ''))} ${esc(shortDay(e.date).replace(/^[^,]*,\s*/, ''))} · ${esc(e.name)}</span><span class="num" style="color:${e.pay ? 'var(--accent)' : 'var(--muted)'}">${e.pay ? '+' : '−'}${money0(Math.abs(e.v))}</span><span class="num" style="width:76px;text-align:right;font-weight:700;color:${e.bal < 0 ? 'var(--over)' : 'var(--fg)'}">${e.bal < 0 ? '−' : ''}${money0(Math.abs(e.bal))}</span></div>`).join('') || '<div class="note">No bills or pay in this window.</div>'}</div></details>
+    ${short ? `<div class="small" style="color:var(--over)">${esc(f.neg.name)} on ${esc(shortDay(f.neg.date))} takes you below zero.</div>` : ''}
   </section>`;
+}
+/* typical commission: paid with the first pay of each month */
+function commissionStats() {
+  const pi = payInfo(), by = {};
+  for (const t of allTx()) if (t.type === 'income' && t.cat === 'Paycheck' && pi.base && t.amount > pi.base * 1.5) { const k = t.date.slice(0, 7); by[k] = (by[k] || 0) + t.amount - pi.base; }
+  const keys = Object.keys(by).sort().slice(-12), vals = keys.map(k => by[k]);
+  return { n: vals.length, avg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : 0, low: vals.length ? round2(Math.min(...vals)) : 0 };
+}
+function viewForecast() {
+  const days = +ui.fcDays || 14, comm = ui.fcComm || 'none', f = forecast({ days, comm }); 
+  const back = `<div class="row between"><button type="button" class="iconbtn" data-act="tab" data-tab="home" aria-label="Back">${I.left}</button><h1 class="h1">Forecast</h1><button type="button" class="link" data-act="paysettings">Pay</button></div>`;
+  if (!f) return `${back}<div class="glass empty"><div class="small">Set your starting balance or read your bank screenshots first.</div></div>`;
+  const cs = commissionStats(), short = f.low < 0;
+  // balance at the end of each day, for the chart
+  const now = isoDate(today()), pts = []; let bal = f.cash.v, i = 0;
+  for (let d = now; d <= f.end; d = addDaysIso(d, 1)) { while (i < f.ev.length && f.ev[i].date <= d) bal = f.ev[i++].bal; pts.push({ d, v: bal }); }
+  const W = 340, H = 150, lo = Math.min(0, ...pts.map(p => p.v)), hi = Math.max(1, ...pts.map(p => p.v)), y = v => Math.round(8 + (hi - v) / (hi - lo) * (H - 24)), x = k => Math.round(k / Math.max(1, pts.length - 1) * W);
+  const path = pts.map((p, k) => `${k ? 'L' : 'M'}${x(k)},${y(p.v)}`).join(' ');
+  const zero = y(0);
+  const days2 = {}; for (const e of f.ev) (days2[e.date] = days2[e.date] || []).push(e);
+  const seg = (k, l, cur, act) => `<button type="button" data-act="${act}" data-v="${k}" aria-pressed="${cur === k}">${l}</button>`;
+  return `${back}
+  <section class="glass card">
+    <div class="small muted" style="font-weight:600">${short ? 'Lowest point' : 'Safe to spend'} until ${esc(shortDay(f.end))}</div>
+    <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-f.low) : money(f.low)}</div>
+    ${short ? `<div class="note" style="color:var(--over)">Your money runs out on ${esc(shortDay(f.neg.date))} when ${esc(f.neg.name)} is due. The lowest point is ${esc(shortDay(f.lowDate))}.</div>` : ''}
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Balance each day">
+      <line x1="0" x2="${W}" y1="${zero}" y2="${zero}" stroke="var(--line)" stroke-dasharray="4 4"/>
+      <clipPath id="fcBelow"><rect x="0" y="${zero}" width="${W}" height="${H}"/></clipPath>
+      <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="${path}" fill="none" stroke="var(--over)" stroke-width="2.5" stroke-linejoin="round" clip-path="url(#fcBelow)"/>
+      <text x="2" y="${H - 2}" font-size="11" fill="var(--muted)">${esc(shortDay(now).replace(/^[^,]*,\s*/, ''))}</text><text x="${W - 2}" y="${H - 2}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(shortDay(f.end).replace(/^[^,]*,\s*/, ''))}</text>
+    </svg>
+    <div class="small muted num">${f.cash.src === 'bank' ? `Starts from your bank balances, ${money(f.cash.v)} available` : `Starts from the app’s balance, ${money(f.cash.v)}`}. Adds base pay of ${money0(f.pi.base)} each payday and takes out ${money(f.billsTotal)} of bills.</div>
+  </section>
+  <div class="seg" role="group" aria-label="How far ahead">${seg(14, '2 weeks', days, 'fcdays')}${seg(28, '4 weeks', days, 'fcdays')}${seg(56, '8 weeks', days, 'fcdays')}</div>
+  <div class="seg" role="group" aria-label="Commission">${seg('none', 'No commission', comm, 'fccomm')}${seg('low', `Low ${money0(cs.low)}`, comm, 'fccomm')}${seg('avg', `Average ${money0(cs.avg)}`, comm, 'fccomm')}</div>
+  <div class="note" style="padding:0 4px">Commission is added on the first payday of each month. Low is your smallest commission in the last ${cs.n} months.</div>
+  <section class="glass card" style="padding:8px 14px">${Object.entries(days2).map(([d, es]) => `<div class="daylabel">${esc(prettyDay(d))}</div>${es.map(e => `<div class="row between small" style="gap:8px;padding:4px 0"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name)}</span><span class="num" style="color:${e.v > 0 ? 'var(--accent)' : 'var(--muted)'}">${e.v > 0 ? '+' : '−'}${money(Math.abs(e.v))}</span><span class="num" style="width:84px;text-align:right;font-weight:700;color:${e.bal < 0 ? 'var(--over)' : 'var(--fg)'}">${e.bal < 0 ? '−' : ''}${money0(Math.abs(e.bal))}</span></div>`).join('')}`).join('') || '<div class="note" style="padding:8px 0">No bills or pay in this window.</div>'}</section>`;
+}
+function openArrange() {
+  const row = (kind, id, label, i, n, shown) => `<div class="row between" style="gap:8px;min-height:44px">
+    ${kind === 'home' ? `<input type="checkbox" data-show="${id}" ${shown ? 'checked' : ''} aria-label="Show ${esc(label)}" style="width:22px;height:22px;accent-color:var(--accent)">` : ''}
+    <span style="flex:1;font-weight:600">${esc(label)}</span>
+    <button type="button" class="iconbtn" data-act="move" data-kind="${kind}" data-id="${id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move ${esc(label)} up" style="transform:rotate(90deg)">${I.left}</button>
+    <button type="button" class="iconbtn" data-act="move" data-kind="${kind}" data-id="${id}" data-d="1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move ${esc(label)} down" style="transform:rotate(90deg)">${I.right}</button></div>`;
+  const home = ordered(HOME_SECTIONS, config.homeOrder), plan = ordered(PLAN_TABS, config.planOrder), hid = config.homeHidden || [];
+  openSheet(`${sheetHead('Arrange')}
+  <div class="h2">Home sections</div><div class="note">Use the arrows to move a section. Untick to hide it.</div>
+  ${home.map(([id, l], i) => row('home', id, l, i, home.length, !hid.includes(id))).join('')}
+  <div class="h2" style="margin-top:8px">Plan tabs</div>
+  ${plan.map(([id, l], i) => row('plan', id, l, i, plan.length, true)).join('')}
+  <button type="button" class="btn block" data-act="arrangereset">Reset to the original order</button>`, { kind: 'arrange' });
 }
 function openPaySettings() {
   const pi = payInfo(), p = config.pay || {};
@@ -1164,7 +1228,7 @@ function render() {
   const v = $('view');
   const active = document.activeElement && document.activeElement.id;
   const selStart = active && document.activeElement.selectionStart;
-  v.innerHTML = ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome();
+  v.innerHTML = ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome();
   document.querySelectorAll('nav.tabs [data-tab]').forEach(b => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
   if (active && $(active) && v.contains($(active))) { const el = $(active); el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch {} }
 }
@@ -1994,6 +2058,12 @@ document.addEventListener('click', async e => {
     case 'debtdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.debts = config.debts.filter(d => d.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Debt deleted'); break;
     case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
     case 'shots': openShots(); break;
+    case 'forecast': closeSheet(); ui.tab = 'forecast'; render(); window.scrollTo(0, 0); break;
+    case 'fcdays': ui.fcDays = +el.dataset.v; render(); break;
+    case 'fccomm': ui.fcComm = el.dataset.v; render(); break;
+    case 'arrange': openArrange(); break;
+    case 'move': { const key = el.dataset.kind === 'home' ? 'homeOrder' : 'planOrder', list = ordered(el.dataset.kind === 'home' ? HOME_SECTIONS : PLAN_TABS, config[key]).map(x => x[0]), i = list.indexOf(el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; config[key] = list; openArrange(); render(); await saveConfig(); break; }
+    case 'arrangereset': config.homeOrder = []; config.planOrder = []; config.homeHidden = []; openArrange(); render(); await saveConfig(); break;
     case 'acctedit': openAcct(el.dataset.k); break;
     case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, kindSet: true, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
     case 'acctdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; } delete config.accounts[sheetCtx.k]; closeSheet(); render(); await saveConfig(); toast('Account removed'); break;
@@ -2044,6 +2114,7 @@ document.addEventListener('change', async e => {
   else if (el.id === 'f-receipt' && el.files && el.files[0]) { scanReceipt(el.files[0]); el.value = ''; }
   else if (el.id === 'r-start' || el.id === 'r-freq') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
+  else if (el.dataset.show && sheetCtx && sheetCtx.kind === 'arrange') { const h = new Set(config.homeHidden || []); if (el.checked) h.delete(el.dataset.show); else h.add(el.dataset.show); config.homeHidden = [...h]; render(); await saveConfig(); }
   else if (el.id === 'shotfile' && el.files && el.files.length) { readShots([...el.files]); el.value = ''; }
   else if (el.id === 'restorefile' && el.files && el.files[0]) readBackup(el.files[0]);
   else if (el.id === 'mp-own' && sheetCtx && sheetCtx.kind === 'import') { sheetCtx.map.own = el.checked; openImport(sheetCtx); }
