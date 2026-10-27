@@ -282,7 +282,7 @@ function defaultConfig() {
   return { v: 1, startingBalance: 0, startMonth: mk(today()),
     expense: EXP_DEFAULT.map(name => ({ name, planned: 0 })),
     income: INC_DEFAULT.map(name => ({ name, planned: 0 })),
-    rules: {}, recurring: [], goals: [] };
+    rules: {}, recurring: [], goals: [], imports: [] };
 }
 let config = defaultConfig();
 let months = {};                 // 'YYYY-MM' -> [tx]
@@ -295,7 +295,7 @@ const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: stor
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function mergeConfig(d) {
   const c = Object.assign(defaultConfig(), clone(d || {}));
-  for (const k of ['expense','income','recurring','goals']) if (!Array.isArray(c[k])) c[k] = defaultConfig()[k];
+  for (const k of ['expense','income','recurring','goals','imports']) if (!Array.isArray(c[k])) c[k] = defaultConfig()[k];
   if (!c.rules || typeof c.rules !== 'object') c.rules = {};
   return c;
 }
@@ -579,6 +579,7 @@ function viewMore() {
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
     <button type="button" data-act="categories"><span class="ic">${I.tag}</span>Categories and store rules${I.chev}</button>
     <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file or spreadsheet${I.chev}</button>
+    <button type="button" data-act="imports"><span class="ic">${I.repeat}</span>Import history<span class="small muted" style="margin-left:auto">${importGroups().length}</span>${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
   </div></section>
   <section class="glass card" aria-label="Colour theme"><div class="h2">Colour theme</div>
@@ -949,6 +950,20 @@ function fileCat(raw, type) {
   const name = String(raw || '').replace(/\s+/g, ' ').trim(); if (!name) return { cat: '', isNew: false };
   const m = matchCat(name, type); return m ? { cat: m, isNew: false } : { cat: name, isNew: true };
 }
+const txKey = t => `${t.date}|${(+t.amount).toFixed(2)}|${String(t.desc).toLowerCase()}`;
+/* earlier imports that this file overlaps, so the user can replace them in one step */
+function overlapImports(items) {
+  const byKey = new Map();
+  for (const t of Object.values(months).flat()) if (t.src === 'import') byKey.set(txKey(t), t.batch || 'legacy');
+  const ids = new Set(items.filter(t => t.dup).map(t => byKey.get(txKey(t))).filter(Boolean));
+  return [...ids].map(id => id === 'legacy' ? { id, name: 'your earlier imports' } : (config.imports.find(b => b.id === id) || { id, name: 'an earlier import' }));
+}
+function replaceBtn(ctx, items) {
+  const ov = overlapImports(items); ctx.replaceIds = ov.map(b => b.id);
+  if (!ov.length) return '';
+  return `<div class="note">This file overlaps ${ov.map(b => esc(b.name)).join(', ')}. Replace it to remove the old version first, so nothing is lost or doubled.</div>
+  <button type="button" class="btn block" data-act="importreplace">Replace ${ov.length === 1 ? 'earlier import' : ov.length + ' earlier imports'} with this file</button>`;
+}
 function importRows(ctx) {
   const existing = new Set(Object.values(months).flat().map(t => `${t.date}|${(+t.amount).toFixed(2)}|${String(t.desc).toLowerCase()}`));
   if (ctx.tracker) return ctx.tracker.map(t => ({ ...t, dup: existing.has(`${t.date}|${t.amount.toFixed(2)}|${t.desc.toLowerCase()}`) }));
@@ -975,6 +990,7 @@ function openImport(ctx) {
     openSheet(`${sheetHead('Import transactions')}
     <div class="note">Choose a bank export (CSV) or a spreadsheet (Excel or CSV). If the file has a Category column, the app uses it and learns each store. Otherwise it picks categories itself. It skips transactions you already have.</div>
     <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
+    <button type="button" class="link" style="align-self:flex-start" data-act="imports">See or delete earlier imports</button>
     <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
     return;
   }
@@ -986,7 +1002,7 @@ function openImport(ctx) {
     ${newCats.length ? `<div class="note">New categories to add: ${newCats.map(t => esc(t.cat)).join(', ')}.</div>` : ''}
     <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} \u00b7 ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '\u2212'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found.</div>'}</div>
     <div class="note">The app keeps each category from the spreadsheet and learns the store, so the same store gets that category next time.</div>
-    <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>`, ctx);
+    <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>${replaceBtn(ctx, items)}`, ctx);
     return;
   }
   ctx.newCats = newCats;
@@ -1003,7 +1019,7 @@ function openImport(ctx) {
   <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app</span></div>
   <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found. Check the columns above.</div>'}</div>
   <div class="note">${ctx.map.cat >= 0 ? 'Categories come from your file. Empty ones are picked by the app.' : 'Items the app can\u2019t match go to Other.'} Fix any later and the app learns the store.</div>
-  <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>`, ctx);
+  <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>${replaceBtn(ctx, items)}`, ctx);
 }
 const XLSX_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
 function sheetRows(ws) {
@@ -1056,7 +1072,9 @@ function readTracker(wb) {
   }
   return { items: out, sheets };
 }
+let importName = '';
 async function readCSV(file) {
+  importName = file.name || '';
   if (/\.xlsx?$/i.test(file.name) || /spreadsheetml|ms-excel/.test(file.type)) {
     try {
       if (!window.XLSX) { toast('Opening spreadsheet\u2026'); await loadScript(XLSX_URL); }
@@ -1080,16 +1098,72 @@ async function readCSV(file) {
     openImport({ kind: 'import', rows, map, cols });
   } catch { toast('That file could not be read. Choose a CSV file.'); }
 }
-async function runImport() {
-  const fresh = sheetCtx.items.filter(t => !t.dup), touched = new Set();
+async function runImport(replace) {
+  const touched = new Set();
+  if (replace) {
+    const ids = new Set(sheetCtx.replaceIds || []);
+    for (const k of Object.keys(months)) {
+      const keep = months[k].filter(t => !(t.src === 'import' && ids.has(t.batch || LEGACY)));
+      if (keep.length !== months[k].length) { months[k] = keep; touched.add(k); }
+    }
+    config.imports = config.imports.filter(b => !ids.has(b.id));
+    sheetCtx.items = importRows(sheetCtx);
+  }
+  const fresh = sheetCtx.items.filter(t => !t.dup);
   let added = 0;
+  const dates = fresh.map(t => t.date).sort();
+  const batch = { id: 'imp-' + uid(), name: importName || 'Imported file', at: new Date().toISOString(), count: fresh.length, from: dates[0] || '', to: dates[dates.length - 1] || '' };
+  if (fresh.length) config.imports.push(batch);
   for (const t of fresh) {
     if (t.newCat) { const list = t.type === 'income' ? config.income : config.expense; if (!matchCat(t.cat, t.type)) { list.push({ name: t.cat, planned: 0 }); added++; } }
     if (t.fromFile) learn(t.desc, t.type, t.cat);
-    const { dup, fromFile, newCat, ...tx } = t; const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
+    const { dup, fromFile, newCat, ...tx } = t; tx.batch = batch.id; const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
   }
   closeSheet(); render(); await saveMonths([...touched]); await saveConfig();
   toast(`Imported ${fresh.length} transactions${added ? ` and ${added} new categor${added === 1 ? 'y' : 'ies'}` : ''}`);
+}
+
+/* import history: every import is kept as a group so it can be deleted in one go */
+const LEGACY = 'legacy';
+function importGroups() {
+  const all = Object.values(months).flat(), counts = {};
+  for (const t of all) if (t.src === 'import') { const b = t.batch || LEGACY; counts[b] = (counts[b] || 0) + 1; }
+  const list = config.imports.map(b => ({ ...b, n: counts[b.id] || 0 })).filter(b => b.n > 0).reverse();
+  if (counts[LEGACY]) {
+    const d = all.filter(t => t.src === 'import' && !t.batch).map(t => t.date).sort();
+    list.push({ id: LEGACY, name: 'Earlier imports', note: 'Imported before the app kept a history', n: counts[LEGACY], from: d[0], to: d[d.length - 1] });
+  }
+  return list;
+}
+const shortDate = iso => iso ? new Date(iso.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+function openImports() {
+  const g = importGroups();
+  openSheet(`${sheetHead('Import history')}
+  <div class="note">Each file you import is kept here as a group. Delete a group to remove every transaction it added. Transactions you entered yourself stay.</div>
+  ${g.length ? `<div class="list">${g.map(b => `<div class="glass card" style="border-radius:var(--r-md);gap:8px">
+    <div><div style="font-weight:700;word-break:break-all">${esc(b.name)}</div>
+    <div class="small muted"><span class="num">${b.n}</span> transaction${b.n === 1 ? '' : 's'} · ${esc(shortDate(b.from))} to ${esc(shortDate(b.to))}</div>
+    <div class="tiny muted">${b.at ? 'Imported ' + esc(shortDate(b.at)) : esc(b.note || '')}</div></div>
+    <button type="button" class="btn danger block" data-act="impdel" data-id="${esc(b.id)}">Delete this import</button></div>`).join('')}</div>`
+    : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No imports yet</div><div class="small">Files you import from More show here.</div></div>`}`, { kind: 'imports' });
+}
+async function deleteImport(btn) {
+  if (btn.dataset.confirm !== '1') { btn.dataset.confirm = '1'; btn.textContent = 'Tap again to delete'; return; }
+  const id = btn.dataset.id, removed = {}, touched = [];
+  for (const k of Object.keys(months)) {
+    const out = months[k].filter(t => t.src === 'import' && (id === LEGACY ? !t.batch : t.batch === id));
+    if (!out.length) continue;
+    removed[k] = out; months[k] = months[k].filter(t => !out.includes(t)); touched.push(k);
+  }
+  const bi = config.imports.findIndex(b => b.id === id), batch = bi >= 0 ? config.imports.splice(bi, 1)[0] : null;
+  const n = Object.values(removed).reduce((a, l) => a + l.length, 0);
+  openImports(); render(); await saveMonths(touched); await saveConfig();
+  toast(`Deleted ${n} imported transaction${n === 1 ? '' : 's'}`, { label: 'Undo', run: async () => {
+    for (const [k, l] of Object.entries(removed)) (months[k] = months[k] || []).push(...l);
+    if (batch) config.imports.push(batch);
+    if (sheetCtx && sheetCtx.kind === 'imports') openImports();
+    render(); await saveMonths(touched); await saveConfig(); toast('Restored');
+  } });
 }
 
 /* backup */
@@ -1188,6 +1262,9 @@ document.addEventListener('click', async e => {
     case 'ruledel': delete config.rules[el.dataset.k]; openCategories(); await saveConfig(); break;
     case 'import': openImport(); break;
     case 'importgo': runImport(); break;
+    case 'importreplace': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to replace'; break; } runImport(true); break;
+    case 'imports': openImports(); break;
+    case 'impdel': deleteImport(el); break;
     case 'backup': openBackup(); break;
     case 'skin': applySkin(el.dataset.v); if (config.skin !== el.dataset.v) { config.skin = el.dataset.v; saveConfig(); } render(); break;
     case 'icon': openIconSheet(el.dataset.v); break;
