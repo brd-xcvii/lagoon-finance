@@ -877,13 +877,13 @@ function openDebt(id) {
   const d = id ? (config.debts || []).find(x => x.id === id) : null, now = isoDate(today());
   const cur = d ? debtBalanceAt(d, now) : '';
   openSheet(`${sheetHead(d ? 'Edit debt' : 'Add a debt')}
-  <div class="field"><label for="d-name">Name</label><input class="input" id="d-name" value="${esc(d ? d.name : '')}" placeholder="Car loan, Beforepay"></div>
+  <div class="field"><label for="d-name">Name</label><input class="input" id="d-name" value="${esc(d ? d.name : '')}" placeholder="Car loan, pay advance"></div>
   <div class="grid2"><div class="field"><label for="d-bal">Balance today</label><input class="input num" id="d-bal" inputmode="decimal" value="${esc(cur)}"></div>
   <div class="field"><label for="d-kind">Type</label><select class="input" id="d-kind"><option value="loan" ${!d || d.kind !== 'advance' ? 'selected' : ''}>Loan</option><option value="advance" ${d && d.kind === 'advance' ? 'selected' : ''}>Pay advance</option></select></div></div>
   <div class="grid2"><div class="field"><label for="d-repay">Repayment</label><input class="input num" id="d-repay" inputmode="decimal" value="${esc(d ? d.repay : '')}"></div>
   <div class="field"><label for="d-freq">How often</label><select class="input" id="d-freq">${FREQS.map(([k, l]) => `<option value="${k}" ${(d ? d.freq : 'weekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
   <div class="field"><label for="d-rate">Interest rate (% a year)</label><input class="input num" id="d-rate" inputmode="decimal" value="${esc(d && d.rate ? d.rate : '')}" placeholder="0"></div>
-  <div class="field"><label for="d-match">Words in the bank description</label><input class="input" id="d-match" value="${esc(d ? d.match : '')}" placeholder="Beforepay"></div>
+  <div class="field"><label for="d-match">Words in the bank description</label><input class="input" id="d-match" value="${esc(d ? d.match : '')}" placeholder="Lender name"></div>
   <div class="note">Separate several with commas. The app uses them to find repayments and new advances.</div>
   <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
   <button type="button" class="btn primary block" data-act="debtsave">${d ? 'Save' : 'Add debt'}</button>
@@ -1118,7 +1118,7 @@ function viewAccounts() {
 }
 
 /* trends: categories and stores this month against last month, and pay split into base and commission */
-const STORE_RULES = [[/uber\s*\*?\s*eats/i, 'Uber Eats'], [/uber\s*\*?\s*trip|\buber\b/i, 'Uber rides'], [/doordash/i, 'DoorDash'], [/mcdonald/i, 'McDonald’s'], [/7-?\s?eleven/i, '7-Eleven'], [/apple\.?\s?com|^apple /i, 'Apple'], [/anthropic|claude/i, 'Claude'], [/deft/i, 'Rent'], [/tobacco|cignall/i, 'Tobacco shops'], [/\bbws\b|dan murphy|liquorland/i, 'Liquor'], [/tatts|ladbrokes|lotto/i, 'Gambling'], [/wdl atm|atm/i, 'ATM cash'], [/vodafone/i, 'Vodafone'], [/origin/i, 'Origin Energy']];
+const STORE_RULES = [[/uber\s*\*?\s*eats/i, 'Uber Eats'], [/uber\s*\*?\s*trip|\buber\b/i, 'Uber rides'], [/doordash/i, 'DoorDash'], [/mcdonald/i, 'McDonald’s'], [/7-?\s?eleven/i, '7-Eleven'], [/apple\.?\s?com|^apple /i, 'Apple'], [/anthropic|claude/i, 'Claude'], [/real estate|\brent\b/i, 'Rent'], [/tobacco|cignall/i, 'Tobacco shops'], [/\bbws\b|dan murphy|liquorland/i, 'Liquor'], [/tatts|ladbrokes|lotto/i, 'Gambling'], [/wdl atm|atm/i, 'ATM cash'], [/vodafone/i, 'Vodafone'], [/origin/i, 'Origin Energy']];
 function storeName(desc) {
   const d = String(desc || '');
   for (const [re, n] of STORE_RULES) if (re.test(d)) return n;
