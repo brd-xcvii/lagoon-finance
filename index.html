@@ -752,12 +752,14 @@ function forecast(opt = {}) {
   const ev = billsBetween(now, end).map(b => ({ date: b.date, name: b.r.name, v: -(+b.r.amount || 0) }));
   if (cash.src === 'bank') for (const t of txOf(now.slice(0, 7))) if (t.date === now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
   const cs = opt.comm && opt.comm !== 'none' ? commissionStats() : null, seen = new Set();
-  for (const c of commissionRows().rows) if (c.actual == null && c.payDate >= now && c.payDate <= end) { seen.add(c.payDate.slice(0, 7)); ev.push({ date: c.payDate, name: `Commission for ${monthName(c.month).name} (after tax)`, v: c.expect, pay: true }); }
+  const commDays = new Set();
+  for (const c of commissionRows().rows) if (c.actual == null && c.payDate >= now && c.payDate <= end) { seen.add(c.payDate.slice(0, 7)); commDays.add(c.payDate); ev.push({ date: c.payDate, name: `Pay with ${monthName(c.month).name} commission`, v: c.expect, pay: true }); }
   if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) {
+    if (commDays.has(d)) continue;
+    if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = opt.comm === 'avg' ? cs.avg : cs.low; if (v > 0) { ev.push({ date: d, name: 'Pay with commission (estimate)', v: round2(pi.base + v), pay: true }); continue; } }
     ev.push({ date: d, name: 'Base pay', v: pi.base, pay: true });
-    if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = opt.comm === 'avg' ? cs.avg : cs.low; if (v > 0) ev.push({ date: d, name: 'Commission (estimate)', v, pay: true }); }
   }
-  ev.sort((a, b) => a.date.localeCompare(b.date) || (a.pay ? 1 : 0) - (b.pay ? 1 : 0));
+  ev.sort((a, b) => a.date.localeCompare(b.date) || (b.pay ? 1 : 0) - (a.pay ? 1 : 0));
   let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
   for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
   const billsTotal = round2(-ev.filter(e => !e.pay).reduce((a, e) => a + e.v, 0));
@@ -788,26 +790,29 @@ function baseGrossYear() {
   let lo = net, hi = net * 2.2; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (m - incomeTax(m) < net) lo = m; else hi = m; }
   return round2(lo);
 }
-/* tax on commission = extra tax it adds on top of your base salary */
-function commissionAfterTax(gross) { const b = baseGrossYear(); return round2(gross - (incomeTax(b + gross) - incomeTax(b))); }
+/* tax on one whole pay (base + commission together), worked out as if every pay were that size */
+const payPeriods = () => payInfo().freq === 'fortnightly' ? 26 : 52;
+function payAfterTax(total) { const n = payPeriods(); return round2(total - incomeTax(total * n) / n); }
+/* pay before tax for the commission payday: older entries held commission only, so add one base pay */
+const commTotal = c => c.total != null ? +c.total : round2(+c.gross + baseGrossYear() / payPeriods());
 function firstPaydayOf(month, pi) { const [y, m] = month.split('-').map(Number); for (let d = 1; d <= 7; d++) { const iso = `${y}-${pad(m)}-${pad(d)}`; if (new Date(iso + 'T00:00:00').getDay() === pi.weekday) return iso; } return `${month}-01`; }
 /* entered commissions, with the actual take-home found in your paychecks once paid */
 function commissionRows() {
   const pi = payInfo(), pays = allTx().filter(t => t.type === 'income' && t.cat === 'Paycheck');
   const rows = (config.commissions || []).map(c => {
     const hit = pays.find(t => Math.abs(dayDiff(c.payDate, t.date)) <= 3 && pi.base && t.amount > pi.base * 1.5);
-    const actual = hit ? round2(hit.amount - pi.base) : null;
-    return { ...c, est: commissionAfterTax(c.gross), actual, rate: actual != null && c.gross > 0 ? actual / c.gross : null };
+    const total = commTotal(c), actual = hit ? round2(hit.amount) : null;
+    return { ...c, total, est: payAfterTax(total), actual, rate: actual != null && total > 0 ? actual / total : null };
   });
   const rated = rows.filter(r => r.rate != null), ratio = rated.length ? rated.reduce((a, r) => a + r.rate, 0) / rated.length : null;
-  for (const r of rows) r.expect = r.actual != null ? r.actual : ratio != null ? round2(r.gross * ratio) : r.est;
+  for (const r of rows) r.expect = r.actual != null ? r.actual : ratio != null ? round2(r.total * ratio) : r.est;
   return { rows: rows.sort((a, b) => b.month.localeCompare(a.month)), ratio };
 }
 function commPreview() {
   const el = $('c-preview'), g = Math.abs(parseMoney(($('c-gross') || {}).value)), m = ($('c-month') || {}).value; if (!el) return;
   if (!(g > 0) || !/^\d{4}-\d{2}$/.test(m || '')) { el.textContent = ''; return; }
-  const { ratio } = commissionRows(), est = commissionAfterTax(g), pd = firstPaydayOf(addMonths(m, 2), payInfo());
-  el.textContent = `About ${money(est)} after tax${ratio != null ? ` (your past commissions suggest ${money(g * ratio)})` : ''}. Paid ${shortDay(pd)}.`;
+  const { ratio } = commissionRows(), est = payAfterTax(g), pd = firstPaydayOf(addMonths(m, 2), payInfo());
+  el.textContent = `About ${money(est)} take-home for that whole pay${ratio != null ? ` (your past commission pays suggest ${money(g * ratio)})` : ''}. Paid ${shortDay(pd)}, instead of the usual base pay.`;
 }
 
 /* typical commission: paid with the first pay of each month */
@@ -874,12 +879,12 @@ function openPaySettings() {
   <button type="button" class="btn primary block" data-act="paysave">Save</button>
   ${p.base ? '<button type="button" class="btn block" data-act="payauto">Work it out from my paychecks</button>' : ''}
   <div class="h2" style="margin-top:10px">Commission</div>
-  <div class="note">Enter each month’s commission before tax once you know it. It’s paid with the first pay two months later: September’s comes in early November. The forecast uses it on that day.</div>
+  <div class="note">Enter the whole pay before tax for each commission payday: base pay plus commission. It’s paid with the first pay two months later: September’s comes in early November. The forecast uses it instead of base pay that day and taxes it as one pay.</div>
   <div class="grid2"><div class="field"><label for="c-month">Month earned</label><input class="input" id="c-month" type="month" value="${esc(addMonths(mk(today()), -1))}"></div>
-  <div class="field"><label for="c-gross">Before tax</label><input class="input num" id="c-gross" inputmode="decimal" placeholder="$0.00"></div></div>
+  <div class="field"><label for="c-gross">Base + commission, before tax</label><input class="input num" id="c-gross" inputmode="decimal" placeholder="$0.00"></div></div>
   <div class="note" id="c-preview"></div>
   <button type="button" class="btn block" data-act="commadd">Add commission</button>
-  ${(() => { const { rows, ratio } = commissionRows(); return rows.length ? `<div style="display:flex;flex-direction:column;gap:8px">${rows.map(r => `<div class="row between small" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(monthName(r.month).name)} ${esc(String(monthName(r.month).year))} · ${money0(r.gross)} before tax</div><div class="tiny muted">${r.actual != null ? `Paid ${esc(shortDay(r.payDate))}: ${money(r.actual)} take-home (${Math.round(r.rate * 100)}%)` : `Paid ${esc(shortDay(r.payDate))} · about ${money(r.expect)} take-home`}</div></div><button type="button" class="link" data-act="commdel" data-id="${esc(r.id)}">Remove</button></div>`).join('')}</div>${ratio != null ? `<div class="tiny muted">Estimates use what your past commissions actually paid: ${Math.round(ratio * 100)}% of the before-tax amount.</div>` : `<div class="tiny muted">Estimates use 2026-27 tax rates on top of your base salary. Your employer’s withholding may differ a little.</div>`}` : ''; })()}`, { kind: 'pay' });
+  ${(() => { const { rows, ratio } = commissionRows(); return rows.length ? `<div style="display:flex;flex-direction:column;gap:8px">${rows.map(r => `<div class="row between small" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(monthName(r.month).name)} ${esc(String(monthName(r.month).year))} · ${money0(r.total)} pay before tax</div><div class="tiny muted">${r.actual != null ? `Paid ${esc(shortDay(r.payDate))}: ${money(r.actual)} take-home (${Math.round(r.rate * 100)}%)` : `Paid ${esc(shortDay(r.payDate))} · about ${money(r.expect)} take-home`}</div></div><button type="button" class="link" data-act="commdel" data-id="${esc(r.id)}">Remove</button></div>`).join('')}</div>${ratio != null ? `<div class="tiny muted">Estimates use what your past commission pays actually came to: ${Math.round(ratio * 100)}% of the before-tax amount.</div>` : `<div class="tiny muted">Estimates tax the whole pay at 2026-27 rates, as if every pay were that size. Your employer’s withholding may differ a little.</div>`}` : ''; })()}`, { kind: 'pay' });
 }
 
 /* weekly limits for the categories you want to watch */
@@ -2264,7 +2269,7 @@ document.addEventListener('click', async e => {
     case 'goalsave': saveGoal(); break;
     case 'tmonth': ui.month = addMonths(ui.month, +el.dataset.d); render(); break;
     case 'paysettings': openPaySettings(); break;
-    case 'commadd': { const g = Math.abs(parseMoney($('c-gross').value)), m = $('c-month').value; if (!(g > 0) || !/^\d{4}-\d{2}$/.test(m)) { toast('Enter the month and the amount before tax.'); break; } config.commissions = (config.commissions || []).filter(c => c.month !== m); config.commissions.push({ id: uid(), month: m, gross: round2(g), payDate: firstPaydayOf(addMonths(m, 2), payInfo()) }); await saveConfig(); openPaySettings(); render(); toast('Commission added'); break; }
+    case 'commadd': { const g = Math.abs(parseMoney($('c-gross').value)), m = $('c-month').value; if (!(g > 0) || !/^\d{4}-\d{2}$/.test(m)) { toast('Enter the month and the amount before tax.'); break; } config.commissions = (config.commissions || []).filter(c => c.month !== m); config.commissions.push({ id: uid(), month: m, total: round2(g), payDate: firstPaydayOf(addMonths(m, 2), payInfo()) }); await saveConfig(); openPaySettings(); render(); toast('Commission added'); break; }
     case 'commdel': config.commissions = (config.commissions || []).filter(c => c.id !== el.dataset.id); await saveConfig(); openPaySettings(); render(); break;
     case 'paysave': { const v = parseMoney($('p-base').value), g = parseMoney($('p-gross').value); config.pay = { ...(config.pay || {}), base: isFinite(v) && v > 0 ? round2(Math.abs(v)) : '', weekday: +$('p-day').value, freq: $('p-freq').value, grossYear: isFinite(g) && g > 0 ? round2(Math.abs(g)) : '' }; closeSheet(); render(); await saveConfig(); toast('Pay saved'); break; }
     case 'payauto': config.pay = {}; closeSheet(); render(); await saveConfig(); toast('Pay worked out from your paychecks'); break;
