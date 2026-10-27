@@ -1261,8 +1261,9 @@ function essentials() {
   const rentBill = config.recurring.find(r => (r.type || 'expense') === 'expense' && /\brent\b/i.test(r.name));
   if (rentBill) avg.rent = round2(perMonth(rentBill.amount, recFreq(rentBill)));
   const suggest = { ...avg, groceries: avg.groceries ? Math.min(avg.groceries, SINGLE_GROCERIES) : SINGLE_GROCERIES };
-  const o = (config.safety || {}).overrides || {};
-  const lines = ESS_LINES.map(([id, label]) => ({ id, label, avg: avg[id], suggest: round2(suggest[id]), value: o[id] != null && o[id] !== '' ? +o[id] : round2(suggest[id]) }));
+  const sf = config.safety || {}, o = sf.overrides || {}, off = sf.off || [];
+  const lines = ESS_LINES.filter(([id]) => !off.includes(id)).map(([id, label]) => ({ id, label, avg: avg[id], suggest: round2(suggest[id]), value: o[id] != null && o[id] !== '' ? +o[id] : round2(suggest[id]) }))
+    .concat((sf.custom || []).map(c => ({ id: c.id, label: c.label, custom: true, value: +c.value || 0 })));
   return { lines, monthly: round2(lines.reduce((a, l) => a + l.value, 0)) };
 }
 /* real money in savings accounts; pots and the safety net divide it up */
@@ -1290,7 +1291,8 @@ function viewSavings() {
   </section>
   <section class="glass card" aria-label="Safety net">
     <div class="row between"><div class="h2">Safety net</div><button type="button" class="link" data-act="essentials">Living costs</button></div>
-    <div class="small muted">Money to live on if your income stopped. Your bare-minimum living cost is <strong class="num" style="color:var(--fg)">${money0(st.e.monthly)}</strong> a month.</div>
+    <div class="small muted">Money to live on if your income stopped.</div>
+    <button type="button" class="row between" data-act="essentials" style="background:var(--field);border:1px solid var(--line);border-radius:14px;padding:10px 12px;width:100%;text-align:left"><span class="small">Bare-minimum living cost<br><span class="tiny muted">Tap to adjust</span></span><span class="mid num">${money0(st.e.monthly)}<span class="small muted"> /mo</span></span></button>
     <div class="seg" role="group" aria-label="Months to cover">${[3, 6, 12, 18, 24].map(m => `<button type="button" data-act="safemonths" data-v="${m}" aria-pressed="${st.months === m}">${m} mo</button>`).join('')}</div>
     <div class="row between"><div><div class="mid num">${money0(st.net)}</div><div class="tiny muted num">of ${money0(st.target)} for ${st.months} months</div></div><div class="chip num" style="align-self:center">Covers ${st.covers.toFixed(1)} months</div></div>
     ${bar(st.net, st.target)}
@@ -1313,15 +1315,21 @@ function viewSavingsHome() {
     <div class="bar"><i style="width:${st.target > 0 ? Math.min(100, Math.round(st.net / st.target * 100)) : 0}%"></i></div>
     <div class="tiny muted num">${money0(st.net)} of ${money0(st.target)} for ${st.months} months · ${money0(st.e.monthly)} a month to live</div></section>`;
 }
+function essTargets(total) { return [3, 6, 12, 18, 24].map(m => `<div class="row between small"><span class="muted">${m} months</span><span class="num">${money0(total * m)}</span></div>`).join(''); }
 function openEssentials() {
-  const e = essentials();
+  const e = essentials(), off = (config.safety || {}).off || [];
   openSheet(`${sheetHead('Bare-minimum living cost')}
-  <div class="note">What you need each month to live, with no debt repayments, subscriptions or extras. Suggestions come from your last 6 months: rent from your bill, groceries capped at $700 for one person, and fuel without small servo purchases. Change any line.</div>
-  ${e.lines.map(l => `<div class="row between" style="gap:10px"><div style="flex:1;min-width:0"><div style="font-weight:600">${esc(l.label)}</div><div class="tiny muted num">Your average ${money0(l.avg)}${l.suggest !== l.avg ? ` · suggested ${money0(l.suggest)}` : ''}</div></div><input class="planinput num" inputmode="decimal" data-ess="${l.id}" value="${l.value}" aria-label="${esc(l.label)} per month"></div>`).join('')}
+  <div class="note">Change any amount and the totals update as you type. Remove a line you don’t need, or add your own. Changes save when you tap Save.</div>
+  ${e.lines.map(l => `<div class="row between" style="gap:8px"><div style="flex:1;min-width:0"><div style="font-weight:600">${esc(l.label)}</div><div class="tiny muted num">${l.custom ? 'Your own line' : `Your average ${money0(l.avg)}${l.suggest !== l.avg ? ` · suggested ${money0(l.suggest)}` : ''}`}</div></div><input class="planinput num" inputmode="decimal" data-ess="${l.id}" value="${l.value}" aria-label="${esc(l.label)} per month"><button type="button" class="iconbtn" data-act="essdel" data-id="${l.id}" aria-label="Remove ${esc(l.label)}" style="font-size:20px;line-height:1">×</button></div>`).join('')}
+  <div class="row" style="gap:8px"><input class="input" id="ess-name" placeholder="Add a cost, e.g. Phone" style="flex:1"><input class="planinput num" id="ess-amt" inputmode="decimal" placeholder="$0"><button type="button" class="btn" data-act="essadd">Add</button></div>
+  ${off.length ? `<div class="tiny muted">Removed: ${off.map(id => esc((ESS_LINES.find(x => x[0] === id) || [id, id])[1])).join(', ')}. <button type="button" class="link" data-act="essrestore">Bring back</button></div>` : ''}
   <div class="row between" style="border-top:1px solid var(--divider);padding-top:10px"><span style="font-weight:700">Per month</span><span class="mid num" id="essTotal">${money0(e.monthly)}</span></div>
+  <div style="display:flex;flex-direction:column;gap:4px" id="essTargets">${essTargets(e.monthly)}</div>
   <button type="button" class="btn primary block" data-act="esssave">Save</button>
   <button type="button" class="btn block" data-act="essreset">Use the suggestions</button>`, { kind: 'ess' });
 }
+/* keep typed amounts when the sheet redraws */
+function essCollect() { const o = { ...((config.safety || {}).overrides || {}) }, custom = ((config.safety || {}).custom || []).map(c => ({ ...c })); document.querySelectorAll('[data-ess]').forEach(i => { const v = parseMoney(i.value); if (!isFinite(v)) return; const c = custom.find(x => x.id === i.dataset.ess); if (c) c.value = round2(Math.abs(v)); else o[i.dataset.ess] = round2(Math.abs(v)); }); config.safety = { ...(config.safety || {}), overrides: o, custom }; }
 function openPot(id) {
   const p = id ? (config.pots || []).find(x => x.id === id) : null;
   openSheet(`${sheetHead(p ? 'Edit savings goal' : 'Add savings goal')}
@@ -2228,8 +2236,11 @@ document.addEventListener('click', async e => {
     case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
     case 'shots': openShots(); break;
     case 'essentials': openEssentials(); break;
-    case 'esssave': { const o = {}; document.querySelectorAll('[data-ess]').forEach(i => { const v = parseMoney(i.value); if (isFinite(v)) o[i.dataset.ess] = round2(Math.abs(v)); }); config.safety = { ...(config.safety || {}), overrides: o }; closeSheet(); render(); await saveConfig(); toast('Living cost saved'); break; }
-    case 'essreset': config.safety = { ...(config.safety || {}), overrides: {} }; await saveConfig(); openEssentials(); render(); break;
+    case 'esssave': essCollect(); closeSheet(); render(); await saveConfig(); toast(`Living cost saved: ${money0(essentials().monthly)} a month`); break;
+    case 'essadd': { const name = $('ess-name').value.trim(), v = Math.abs(parseMoney($('ess-amt').value)) || 0; if (!name) { toast('Enter a name for the cost.'); break; } essCollect(); config.safety.custom = [...(config.safety.custom || []), { id: 'c-' + uid(), label: name, value: round2(v) }]; openEssentials(); render(); await saveConfig(); break; }
+    case 'essdel': { essCollect(); const id = el.dataset.id, sf = config.safety; if (/^c-/.test(id)) sf.custom = (sf.custom || []).filter(c => c.id !== id); else { sf.off = [...new Set([...(sf.off || []), id])]; if (sf.overrides) delete sf.overrides[id]; } openEssentials(); render(); await saveConfig(); break; }
+    case 'essrestore': essCollect(); config.safety.off = []; openEssentials(); render(); await saveConfig(); break;
+    case 'essreset': config.safety = { ...(config.safety || {}), overrides: {}, off: [] }; await saveConfig(); openEssentials(); render(); break;
     case 'safemonths': config.safety = { ...(config.safety || {}), months: +el.dataset.v }; render(); await saveConfig(); break;
     case 'potedit': openPot(el.dataset.id); break;
     case 'potsave': { const name = $('sp-name').value.trim(), target = Math.abs(parseMoney($('sp-target').value)); if (!name || !(target > 0)) { const e = $('formErr'); e.hidden = false; e.textContent = !name ? 'Enter what you\u2019re saving for.' : 'Enter a target above $0.'; break; } config.pots = config.pots || []; const rec = { name, target: round2(target), due: $('sp-due').value || '' }; if (sheetCtx.id) Object.assign(config.pots.find(x => x.id === sheetCtx.id), rec); else config.pots.push({ id: uid(), saved: 0, ...rec }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'savings'; render(); await saveConfig(); toast('Savings goal saved'); break; }
@@ -2286,7 +2297,7 @@ document.addEventListener('input', e => {
   else if (id === 'f-amount' && sheetCtx && sheetCtx.items) renderSplit();
   else if (id === 'x-amount' && sheetCtx && sheetCtx.kind === 'extra') extraPreview();
   else if (id === 'r-times') recPreview();
-  else if (e.target.dataset && e.target.dataset.ess) { let t = 0; document.querySelectorAll('[data-ess]').forEach(i => { const v = parseMoney(i.value); if (isFinite(v)) t += Math.abs(v); }); const el = $('essTotal'); if (el) el.textContent = money0(t); }
+  else if (e.target.dataset && e.target.dataset.ess) { let t = 0; document.querySelectorAll('[data-ess]').forEach(i => { const v = parseMoney(i.value); if (isFinite(v)) t += Math.abs(v); }); const el = $('essTotal'); if (el) el.textContent = money0(t); const tg = $('essTargets'); if (tg) tg.innerHTML = essTargets(t); }
   else if ((id === 'c-gross' || id === 'c-month') && sheetCtx && sheetCtx.kind === 'pay') commPreview();
 });
 document.addEventListener('change', async e => {
