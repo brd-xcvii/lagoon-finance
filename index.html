@@ -225,8 +225,8 @@ nav.tabs .add:disabled{opacity:.5}
 const EXP_DEFAULT = ['Food','Gifts','Health/Medical','Home','Transportation','Personal','Pets','Utilities','Travel','Debt','Insurance','Subscriptions','Investments','Other'];
 const INC_DEFAULT = ['Paycheck','Transfer From Savings','Interest','Dividends','Gifts','Repayment','Other'];
 const KEYWORDS_EXP = [
-  [/woolworths|coles|aldi|\biga\b|harris farm|foodworks|mcdonald|kfc|hungry jack|domino|uber ?eats|menulog|doordash|cafe|coffee|bakery|restaurant|grill|pizza|sushi|bottle ?o|dan murphy|liquorland/i,'Food'],
-  [/\bbp\b|shell|ampol|caltex|7-?eleven|7 eleven|united petrol|myki|\bptv\b|\buber\b(?! ?eats)|didi|citylink|eastlink|linkt|parking|vicroads|tyre|mechanic/i,'Transportation'],
+  [/woolworths|coles|aldi|\biga\b|harris farm|foodworks|mcdonald|kfc|hungry jack|domino|uber\s*\*?\s*eats|menulog|doordash|cafe|coffee|bakery|restaurant|grill|pizza|sushi|bottle ?o|dan murphy|liquorland/i,'Food'],
+  [/\bbp\b|shell|ampol|caltex|7-?eleven|7 eleven|united petrol|myki|\bptv\b|\buber\b(?!\s*\*?\s*eats)|didi|citylink|eastlink|linkt|parking|vicroads|tyre|mechanic/i,'Transportation'],
   [/netflix|spotify|disney|\bstan\b|binge|kayo|apple\.com|icloud|youtube|prime video|amazon prime|audible|chatgpt|claude\.ai|anthropic|adobe|microsoft 365|xbox|playstation/i,'Subscriptions'],
   [/origin|\bagl\b|energyaustralia|red energy|alinta|momentum energy|telstra|optus|vodafone|aussie broadband|\btpg\b|yarra valley water|south east water|greater western water|council/i,'Utilities'],
   [/chemist|priceline|pharmacy|medical|dental|dentist|physio|hospital|pathology|optometr|specsavers/i,'Health/Medical'],
@@ -282,7 +282,7 @@ function defaultConfig() {
   return { v: 1, startingBalance: 0, startMonth: mk(today()),
     expense: EXP_DEFAULT.map(name => ({ name, planned: 0 })),
     income: INC_DEFAULT.map(name => ({ name, planned: 0 })),
-    rules: {}, itemRules: {}, recurring: [], goals: [], imports: [], debts: [], pay: {} };
+    rules: {}, itemRules: {}, recurring: [], goals: [], imports: [], debts: [], pay: {}, accounts: {} };
 }
 let config = defaultConfig();
 let months = {};                 // 'YYYY-MM' -> [tx]
@@ -298,6 +298,7 @@ function mergeConfig(d) {
   for (const k of ['expense','income','recurring','goals','imports','debts']) if (!Array.isArray(c[k])) c[k] = defaultConfig()[k];
   if (!c.rules || typeof c.rules !== 'object') c.rules = {};
   if (!c.itemRules || typeof c.itemRules !== 'object') c.itemRules = {};
+  if (!c.accounts || typeof c.accounts !== 'object' || Array.isArray(c.accounts)) c.accounts = {};
   return c;
 }
 function saveLocal() {
@@ -432,7 +433,7 @@ function monthNav(act) {
 }
 function txRow(t) {
   const sign = t.type === 'income' ? '+' : '−';
-  const src = t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.src === 'import' ? ' · Imported' : '';
+  const src = (t.pending ? ' · Pending' : '') + (t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.shot ? ' · Screenshot' : t.src === 'import' ? ' · Imported' : '');
   return `<div class="swipe" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}"><button type="button" class="swipe-del" data-act="swipedel" tabindex="-1" aria-label="Delete ${esc(t.desc)}">Delete</button><button type="button" class="tx" data-act="edit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}">
     <span class="avatar" aria-hidden="true">${esc((t.desc || '?').trim().charAt(0).toUpperCase())}</span>
     <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${src}</div></span>
@@ -471,7 +472,7 @@ function viewHome() {
   const now = isoDate(today());
   const due = (now >= p.from && now <= p.to) ? dueSoon().slice(0, 3) : [];
   const saved = tt.net >= 0;
-  return `${loadingNote()}${viewSafe()}${periodBar()}
+  return `${loadingNote()}${viewSafe()}${viewAccounts()}${periodBar()}
   <section class="glass card" aria-label="Balance">
     <div class="small muted" style="font-weight:600">Balance at end of ${word}</div>
     <div class="big num">${eb == null ? '—' : money(eb)}</div>
@@ -584,6 +585,7 @@ function viewMore() {
     <button type="button" data-act="paysettings"><span class="ic">${I.wallet}</span>Pay and payday<span class="small muted num" style="margin-left:auto">${money0(payInfo().base)} ${esc(WEEKDAYS[payInfo().weekday].slice(0, 3))}</span>${I.chev}</button>
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
     <button type="button" data-act="categories"><span class="ic">${I.tag}</span>Categories and store rules${I.chev}</button>
+    <button type="button" data-act="shots"><span class="ic">${I.cam}</span>Read bank screenshots${I.chev}</button>
     <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file or spreadsheet${I.chev}</button>
     <button type="button" data-act="imports"><span class="ic">${I.repeat}</span>Import history<span class="small muted" style="margin-left:auto">${importGroups().length}</span>${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
@@ -889,6 +891,193 @@ function openDebtsImport(rows) {
   <div class="small">Found <strong class="num">${list.length}</strong> debts: <strong class="num">${list.filter(d => !have.has(d.name.toLowerCase())).length}</strong> new, <strong class="num">${list.filter(d => have.has(d.name.toLowerCase())).length}</strong> updated, totalling <strong class="num">${money0(fresh.reduce((a, d) => a + d.balance, 0))}</strong>.</div>
   <div class="preview">${fresh.map(d => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(d.name)}</div><div class="tiny muted">${have.has(d.name.toLowerCase()) ? 'Update · ' : ''}${money(d.repay)} ${esc(freqLabel(d.freq).toLowerCase())}${d.rate ? ' · ' + d.rate + '% a year' : ''} · as of ${esc(shortDate(d.asOf))}</div></span><span class="amt num">${money0(d.balance)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these debts.</div>'}</div>
   <button type="button" class="btn primary block" data-act="debtsimportgo" ${fresh.length ? '' : 'disabled'}>Save ${fresh.length} debt${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'debtsimport', debts: fresh });
+}
+
+/* bank screenshots (CommBank app): read the account, balances and transactions from the OCR word positions */
+const CBA_CATS = { 'entertainment': 'Personal', 'eating out': 'Food', 'takeaway': 'Food', 'groceries': 'Food', 'food & drink': 'Food', 'transport': 'Transportation', 'transportation': 'Transportation', 'fuel': 'Transportation', 'bills & utilities': 'Utilities', 'utilities': 'Utilities', 'health': 'Health/Medical', 'health & fitness': 'Personal', 'shopping': 'Personal', 'personal care': 'Personal', 'lifestyle': 'Personal', 'home': 'Home', 'household': 'Home', 'travel': 'Travel', 'holidays & travel': 'Travel', 'fees & interest': 'Debt', 'fees & charges': 'Debt', 'loans': 'Debt', 'insurance': 'Insurance', 'pets': 'Pets', 'gifts & donations': 'Gifts', 'education': 'Personal', 'kids': 'Personal', 'cash': 'Personal', 'income': 'Paycheck', 'salary': 'Paycheck', 'transfers & payments': 'Other', 'uncategorised': 'Other', 'other': 'Other', 'subscriptions': 'Subscriptions', 'business': 'Other' };
+const SHOT_MONEY = /^[-−–]?\s?\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})$/;
+const SHOT_DATE = /^(?:mon|tue|wed|thu|fri|sat|sun)\w*\s+(\d{1,2})\s+([a-z]{3})\w*(?:\s+(\d{4}))?|^(today|yesterday)\b/i;
+function shotMoney(s) { const t = String(s).replace(/[−–]/g, '-').replace(/[^0-9.\-]/g, ''); const v = parseFloat(t.replace('-', '')); return /-/.test(t) ? -v : v; }
+function tsvLines(tsv) {
+  const map = new Map();
+  for (const row of String(tsv || '').split('\n').slice(1)) {
+    const c = row.split('\t'); if (c.length < 12 || c[0] !== '5') continue;
+    const text = c.slice(11).join('\t').trim(); if (!text || +c[10] < 0) continue;
+    const k = c[2] + '.' + c[3] + '.' + c[4], x = +c[6], y = +c[7], w = +c[8], h = +c[9];
+    (map.get(k) || map.set(k, []).get(k)).push({ text, x0: x, y0: y, x1: x + w, y1: y + h });
+  }
+  return [...map.values()];
+}
+function parseBankShot(tsv, W, todayIso) {
+  const words = tsvLines(tsv);
+  const L = [], amts = [], moneyWords = [];
+  for (const ws of words) {
+    const isMoneyWord = w => w.x0 >= W * 0.6 && /^[-\u2212\u2013]?\$?[\d,]*\.?\d*$/.test(w.text) && /\d|\$|^[-\u2212\u2013]$/.test(w.text);
+    const right = ws.filter(isMoneyWord), left = ws.filter(w => !isMoneyWord(w));
+    moneyWords.push(...right);
+    const body = left.filter(w => w.x0 >= W * 0.16 || (w.x1 > W * 0.17 && (w.text.match(/[a-z]/gi) || []).length >= 3)), allText = left.map(w => w.text).join(' ').trim();
+    if (!body.length) { if (SHOT_DATE.test(allText)) L.push({ text: '', all: allText, y0: Math.min(...left.map(w => w.y0)), y1: Math.max(...left.map(w => w.y1)), x0: 0 }); continue; }
+    L.push({ text: body.map(w => w.text.replace(/^[\u2018\u2019'"`|]+/, '')).join(' ').trim(), all: left.map(w => w.text).join(' ').trim(), y0: Math.min(...body.map(w => w.y0)), y1: Math.max(...body.map(w => w.y1)), x0: Math.min(...body.map(w => w.x0)) });
+  }
+  // join amount pieces on the same row (OCR can split "-" from "$65.10")
+  moneyWords.sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1) || a.x0 - b.x0);
+  for (const w of moneyWords) {
+    const cy = (w.y0 + w.y1) / 2, g = amts.find(a => !a.done && Math.abs(a.y - cy) < Math.max(a.h, w.y1 - w.y0) * 0.8);
+    if (g) { g.parts.push(w); g.y0 = Math.min(g.y0, w.y0); g.y1 = Math.max(g.y1, w.y1); g.h = Math.max(g.h, w.y1 - w.y0); }
+    else amts.push({ parts: [w], y: cy, y0: w.y0, y1: w.y1, h: w.y1 - w.y0 });
+  }
+  for (let i = amts.length - 1; i >= 0; i--) {
+    const a = amts[i], t = a.parts.sort((p, q) => p.x0 - q.x0).map(p => p.text).join('').replace(/\s+/g, '');
+    if (!SHOT_MONEY.test(t)) { amts.splice(i, 1); continue; }
+    a.v = shotMoney(t); a.box = { x0: Math.min(...a.parts.map(p => p.x0)), y0: a.y0, x1: Math.max(...a.parts.map(p => p.x1)), y1: a.y1 };
+  }
+  L.sort((a, b) => a.y0 - b.y0); amts.sort((a, b) => a.y - b.y);
+  const allLines = words.map(ws => ({ text: ws.map(w => w.text).join(' '), y0: Math.min(...ws.map(w => w.y0)) })).sort((a, b) => a.y0 - b.y0);
+  // header: account name, number and balances
+  const acc = { name: '', last4: '', balance: null, available: null, pending: null };
+  const full = allLines.map(l => l.text);
+  for (let i = 0; i < full.length; i++) {
+    const t = full[i];
+    let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{6}\s*(\d{4})\b/.exec(t); if (m && !acc.last4) acc.last4 = m[1];
+    m = /^balance\s*(-?\$[\d,]+\.\d{2})/i.exec(t.replace(/\s+/g, ' ')); if (m && acc.balance == null) acc.balance = shotMoney(m[1]);
+    m = /^pending\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.pending == null) acc.pending = shotMoney(m[1]);
+    if (/^available(\s+(balance|credit))?$/i.test(t.trim()) && acc.available == null) { const n = (full[i + 1] || '').replace(/\s+/g, ''); if (SHOT_MONEY.test(n)) acc.available = shotMoney(n); }
+    m = /^available\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.available == null) acc.available = shotMoney(m[1]);
+  }
+  const availY = (allLines.find(l => /^available/i.test(l.text)) || { y0: Infinity }).y0;
+  const title = allLines.filter(l => l.y0 < availY && (l.text.replace(/[^a-z]/gi, '').length >= 4) && !/\d{1,2}:\d{2}/.test(l.text)).slice(-1)[0];
+  if (title) acc.name = title.text.replace(/^[^A-Za-z]+/, '').replace(/[^A-Za-z0-9 &'-]+$/, '').trim();
+  // transactions: blocks of description lines under a date heading, closed by the bank's category label
+  const firstDate = L.findIndex(l => SHOT_DATE.test(l.all));
+  const nav = L.findIndex(l => /\bhome\b.*\baccounts\b|\baccounts\b.*\bpay\b.*\bcards\b/i.test(l.all));
+  const end = nav >= 0 ? nav : L.length;
+  const now = new Date(todayIso + 'T00:00:00'), MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const blocks = []; let date = null, cur = null;
+  const lh = L.length ? L.reduce((a, l) => a + (l.y1 - l.y0), 0) / L.length : 20;
+  for (let i = Math.max(0, firstDate); firstDate >= 0 && i < end; i++) {
+    const l = L[i], t = l.text, dm = SHOT_DATE.exec(l.all);
+    if (dm) {
+      if (dm[4]) { const d = new Date(now); if (/yesterday/i.test(dm[4])) d.setDate(d.getDate() - 1); date = isoOf(d); }
+      else { const mo = MON.indexOf(dm[2].toLowerCase()); let y = dm[3] ? +dm[3] : now.getFullYear(); let d = new Date(y, mo, +dm[1]); if (!dm[3] && d - now > 2 * 86400000) d = new Date(y - 1, mo, +dm[1]); date = isoOf(d); }
+      cur = null; continue;
+    }
+    const cat = CBA_CATS[t.toLowerCase().replace(/\s+/g, ' ').trim()];
+    if (cat !== undefined && cur) { cur.cbaCat = t.trim(); cur.cat = cat; cur.y1 = l.y1; cur = null; continue; }
+    if ((t.replace(/[^a-z]/gi, '').length < 3)) continue;
+    if (!cur || l.y0 - cur.y1 > lh * 1.9) { cur = { date, lines: [], y0: l.y0, y1: l.y1, cat: null }; blocks.push(cur); }
+    cur.lines.push(t); cur.y1 = l.y1;
+  }
+  const items = [];
+  for (const b of blocks) {
+    const mid = (b.y0 + b.y1) / 2;
+    const a = amts.filter(x => !x.used && x.y >= b.y0 - lh * 1.5 && x.y <= b.y1 + lh * 1.5).sort((p, q) => Math.abs(p.y - mid) - Math.abs(q.y - mid))[0];
+    if (!a || !b.date) continue;
+    a.used = true;
+    let desc = b.lines.join(' ').replace(/\s+/g, ' ').trim();
+    const pending = /^pending:?\s*/i.test(desc); desc = desc.replace(/^pending:?\s*/i, '').replace(/\bPay[lI1|]{1,2}D\b/g, 'PayID');
+    items.push({ date: b.date, desc, amount: Math.abs(a.v), minus: a.v < 0, box: a.box, pending, cbaCat: b.cbaCat || '', bankCat: b.cat || '' });
+  }
+  return { account: acc, items };
+}
+
+/* screenshot import: read each image on the phone, then add new transactions and update account balances */
+async function prepColor(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(file));
+  const scale = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const g = document.createElement('canvas'); g.width = c.width; g.height = c.height;
+  const gx = g.getContext('2d'); gx.drawImage(c, 0, 0);
+  const img = gx.getImageData(0, 0, g.width, g.height), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { let v = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]; v = Math.max(0, Math.min(255, (v - 128) * 1.5 + 140)); d[i] = d[i+1] = d[i+2] = v; }
+  gx.putImageData(img, 0, 0);
+  return { color: c, gray: g };
+}
+/* credits show in green in the bank app */
+function isGreen(canvas, box) {
+  if (!box) return false;
+  const x = Math.max(0, box.x0 - 4), y = Math.max(0, box.y0 - 4), w = Math.min(canvas.width - x, box.x1 - box.x0 + 8), h = Math.min(canvas.height - y, box.y1 - box.y0 + 8);
+  if (w <= 0 || h <= 0) return false;
+  const d = canvas.getContext('2d').getImageData(x, y, w, h).data; let g = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) { n++; if (d[i+1] - Math.max(d[i], d[i+2]) > 35) g++; }
+  return n > 0 && g / n > 0.03;
+}
+const INCOME_WORDS = /^(fast )?transfer from|salary|wages?|refund|return|credit interest|direct credit|deposit|cashback/i;
+function openShots() {
+  openSheet(`${sheetHead('Bank screenshots')}
+  <div class="note">Take screenshots of an account in the CommBank app: the top with the balance, then scroll for more transactions. Choose them all here. The app reads them on your phone.</div>
+  <label class="scan" for="shotfile">${I.cam}<span>Choose screenshots</span><input id="shotfile" type="file" accept="image/*" multiple></label>
+  <div class="note" id="shotStatus" hidden></div>`, { kind: 'shots' });
+}
+async function readShots(files) {
+  const status = $('shotStatus'), ctx = sheetCtx, results = [];
+  if (status) { status.hidden = false; status.textContent = ocrWorker ? 'Reading…' : 'The first read downloads the reader. This can take 20 seconds.'; }
+  try {
+    const worker = await getOcr();
+    for (let i = 0; i < files.length; i++) {
+      if (sheetCtx !== ctx) return;
+      if (status) status.textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
+      const { color, gray } = await prepColor(files[i]);
+      const { data } = await worker.recognize(gray);
+      const r = parseBankShot(data.tsv || '', gray.width, isoDate(today()));
+      for (const it of r.items) it.type = it.minus ? 'expense' : isGreen(color, it.box) ? 'income' : INCOME_WORDS.test(it.desc) ? 'income' : 'expense';
+      results.push(r);
+    }
+  } catch { if (status) status.textContent = navigator.onLine ? 'A screenshot could not be read. Try again.' : 'The first read needs internet to download the reader.'; return; }
+  if (sheetCtx !== ctx) return;
+  openShotImport(results);
+}
+function openShotImport(results) {
+  const isDup = dupChecker(), all = allTx(), seen = new Set(), items = [];
+  const accounts = []; let last = null, skipped = 0;
+  for (const r of results) {
+    const a = r.account; if (a.last4 || a.balance != null || a.available != null) { last = a; if (!accounts.some(x => x.last4 === a.last4 && x.name === a.name)) accounts.push(a); }
+    for (const it of r.items) {
+      const k = `${it.date}|${it.amount.toFixed(2)}|${it.desc.toLowerCase()}`; if (seen.has(k)) continue; seen.add(k);
+      if (OWN_MOVE.test(it.desc)) { skipped++; continue; }
+      const near = all.find(t => t.type === it.type && t.src !== 'recurring' && Math.abs((+t.amount || 0) - it.amount) < 0.005 && Math.abs(dayDiff(t.date, it.date)) <= 3);
+      const dup = isDup(it.date, it.amount, it.desc, it.type) || !!near;
+      const bill = dup ? null : isDup.billFor(it.date, it.amount, it.type);
+      const fallback = it.type === 'expense' && config.expense.some(c => c.name === it.bankCat) ? it.bankCat : 'Other';
+      items.push({ ...it, dup, clears: near && near.pending && !it.pending ? near.id : '', takes: bill ? bill.id : '', cat: bill ? bill.cat : (suggestCat(it.desc, it.type) || fallback), acct: (last && last.last4) || '' });
+    }
+  }
+  const fresh = items.filter(t => !t.dup);
+  openSheet(`${sheetHead('From your screenshots')}
+  ${accounts.length ? `<div style="display:flex;flex-direction:column;gap:6px">${accounts.map(a => `<div class="row between small"><span style="font-weight:600">${esc(a.name || 'Account')}${a.last4 ? ' ••' + esc(a.last4) : ''}</span><span class="num">${a.balance != null ? money(a.balance) : ''}${a.available != null ? ` <span class="muted">(${money(a.available)} available)</span>` : ''}</span></div>`).join('')}</div>` : '<div class="note">No account balance found. Include the top of the account screen to update balances.</div>'}
+  <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app${skipped ? ` · ${skipped} transfers between your accounts skipped` : ''}</span></div>
+  <div class="preview">${fresh.map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}${t.pending ? ' · Pending' : ''}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions.</div>'}</div>
+  <div class="note">Check the amounts against your screenshots. You can fix any later and the app learns the store.</div>
+  <button type="button" class="btn primary block" data-act="shotgo" ${fresh.length || accounts.length ? '' : 'disabled'}>${fresh.length ? `Add ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}` : 'Save'}${accounts.length ? ' and update balances' : ''}</button>`, { kind: 'shotimport', items, accounts });
+}
+async function runShotImport() {
+  const ctx = sheetCtx, touched = new Set();
+  config.accounts = config.accounts || {};
+  for (const a of ctx.accounts) { const k = a.last4 || a.name; config.accounts[k] = { ...(config.accounts[k] || {}), name: a.name || (config.accounts[k] || {}).name || 'Account', last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), at: Date.now() }; }
+  const fresh = ctx.items.filter(t => !t.dup);
+  for (const t of ctx.items) if (t.dup && t.clears) { const o = allTx().find(x => x.id === t.clears); if (o) { o.pending = false; touched.add(o.date.slice(0, 7)); } }
+  if (fresh.length) {
+    const dates = fresh.map(t => t.date).sort();
+    const batch = { id: 'imp-' + uid(), name: `Screenshots ${shortDate(isoDate(today()))}`, at: new Date().toISOString(), count: fresh.length, from: dates[0], to: dates[dates.length - 1] };
+    config.imports.push(batch);
+    for (const t of fresh) {
+      const tx = { id: t.takes || uid(), date: t.date, amount: round2(t.amount), desc: t.desc, cat: t.cat, type: t.type, src: 'import', shot: true, batch: batch.id, ...(t.pending ? { pending: true } : {}), ...(t.acct ? { acct: t.acct } : {}) };
+      if (t.takes) for (const k of Object.keys(months)) { const n = months[k].length; months[k] = months[k].filter(x => x.id !== t.takes); if (months[k].length !== n) touched.add(k); }
+      const k = t.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
+    }
+  }
+  closeSheet(); render(); await saveMonths([...touched]); await saveConfig();
+  toast(`${fresh.length ? `Added ${fresh.length} transactions` : 'No new transactions'}${ctx.accounts.length ? ', balances updated' : ''}`);
+}
+function viewAccounts() {
+  const list = Object.values(config.accounts || {}); if (!list.length) return '';
+  const total = round2(list.reduce((a, x) => a + (+x.balance || 0), 0)), avail = round2(list.reduce((a, x) => a + (+x.available || 0), 0));
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+  return `<section class="glass card" aria-label="Accounts">
+    <div class="row between"><div class="h2">Accounts</div><button type="button" class="link" data-act="shots">Update</button></div>
+    ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div></div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
+    <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total</span><span class="num" style="font-weight:700">${money(total)}${avail ? ` <span class="muted">(${money(avail)} available)</span>` : ''}</span></div></section>`;
 }
 
 /* trends: categories and stores this month against last month, and pay split into base and commission */
@@ -1424,7 +1613,7 @@ function replaceBtn(ctx, items) {
 /* a bank line is already in the app if it matches exactly, was split from a receipt, or matches a scanned receipt's total within 4 days */
 function dupChecker() {
   const all = Object.values(months).flat(), keys = new Set(all.map(txKey)), rec = new Map();
-  for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt' || t.debtId) { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
+  for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt' || t.debtId || t.shot) { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
   const days = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
   const recs = all.filter(t => t.src === 'recurring');
   const fn = (date, amount, desc, type) => {
@@ -1483,6 +1672,7 @@ function openImport(ctx) {
     <div class="note">And a debts file: columns Name, Balance, As of, Repayment, Frequency, Match and Type.</div>
     <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
     <button type="button" class="link" style="align-self:flex-start" data-act="imports">See or delete earlier imports</button>
+    <button type="button" class="btn block" data-act="shots">${I.cam} Read bank screenshots instead</button>
     <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
     return;
   }
@@ -1766,6 +1956,8 @@ document.addEventListener('click', async e => {
     case 'extrasave': saveExtra(); break;
     case 'debtdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.debts = config.debts.filter(d => d.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Debt deleted'); break;
     case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
+    case 'shots': openShots(); break;
+    case 'shotgo': runShotImport(); break;
     case 'billsimportgo': { const bs = sheetCtx.bills || [], rm = (sheetCtx.removals || []).map(n => n.toLowerCase()); config.recurring = config.recurring.filter(r => !rm.includes(r.name.toLowerCase())); for (const b of bs) { const ex = config.recurring.find(r => r.name.toLowerCase() === b.name.toLowerCase()); if (ex) { Object.assign(ex, b); delete ex.day; delete ex.start; } else config.recurring.push({ id: uid(), ...b, skip: [] }); } closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
     case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
     case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
@@ -1812,6 +2004,7 @@ document.addEventListener('change', async e => {
   else if (el.id === 'f-receipt' && el.files && el.files[0]) { scanReceipt(el.files[0]); el.value = ''; }
   else if (el.id === 'r-start' || el.id === 'r-freq') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
+  else if (el.id === 'shotfile' && el.files && el.files.length) { readShots([...el.files]); el.value = ''; }
   else if (el.id === 'restorefile' && el.files && el.files[0]) readBackup(el.files[0]);
   else if (el.id === 'mp-own' && sheetCtx && sheetCtx.kind === 'import') { sheetCtx.map.own = el.checked; openImport(sheetCtx); }
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
