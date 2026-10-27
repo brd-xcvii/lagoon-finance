@@ -938,6 +938,32 @@ async function deleteRecurring(btn) {
   await saveConfig(); openRecurring(); render(); toast('Stopped. Past entries stay in your history.');
 }
 
+/* recurring bills file: columns Name, Amount, Category, Type, Frequency, Next date */
+function isBillsFile(rows) { const h = (rows[0] || []).map(c => String(c).trim().toLowerCase()); return h.some(c => /^(frequency|freq|how often)$/.test(c)) && h.some(c => /^(name|bill)$/.test(c)); }
+function freqOf(v) {
+  const t = String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (/^week/.test(t)) return 'weekly'; if (/fortnight|2week|biweek/.test(t)) return 'fortnightly'; if (/4week|every4/.test(t)) return '4weekly';
+  if (/quarter|3month/.test(t)) return 'quarterly'; if (/year|annual/.test(t)) return 'yearly'; return 'monthly';
+}
+function openBillsImport(rows) {
+  const h = rows[0].map(c => String(c).trim().toLowerCase()), col = re => h.findIndex(c => re.test(c));
+  const ni = col(/^(name|bill)$/), ai = col(/amount/), ci = col(/categ/), ti = col(/^type$/), fi = col(/^(frequency|freq|how often)$/), di = col(/date|first|next|start/);
+  const have = new Set(config.recurring.map(r => r.name.toLowerCase()));
+  const bills = rows.slice(1).map(r => {
+    const type = ti >= 0 && /inc/i.test(String(r[ti])) ? 'income' : 'expense', raw = String(r[ci] || '').trim();
+    return { name: String(r[ni] || '').replace(/\s+/g, ' ').trim(), amount: round2(Math.abs(parseMoney(r[ai])) || 0), type,
+      cat: matchCat(raw, type) || raw || 'Other', freq: freqOf(r[fi]), startDate: parseDateStr(String(r[di] || ''), 'dmy') || '' };
+  }).filter(b => b.name && b.amount > 0 && b.startDate);
+  const fresh = bills.filter(b => !have.has(b.name.toLowerCase()));
+  const per = b => b.amount * ({ weekly: 52 / 12, fortnightly: 26 / 12, '4weekly': 13 / 12, quarterly: 1 / 3, yearly: 1 / 12 }[b.freq] || 1);
+  const monthly = round2(fresh.filter(b => b.type === 'expense').reduce((a, b) => a + per(b), 0));
+  openSheet(`${sheetHead('Add recurring bills')}
+  <div class="small">Found <strong class="num">${bills.length}</strong> bill${bills.length === 1 ? '' : 's'}. <strong class="num">${fresh.length}</strong> are new, about <strong class="num">${money0(monthly)}</strong> a month.</div>
+  <div class="preview">${fresh.map(b => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(b.name)}</div><div class="tiny muted">${esc(b.cat)} · ${esc(freqLabel(b.freq))} · next ${esc(shortDate(b.startDate))}</div></span><span class="amt num">${money(b.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these bills.</div>'}</div>
+  <div class="note">Each bill is added on its date from now on. When your bank file arrives later, the matching bank line takes the bill's place, so nothing doubles.</div>
+  <button type="button" class="btn primary block" data-act="billsimportgo" ${fresh.length ? '' : 'disabled'}>Add ${fresh.length} bill${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'billsimport', bills: fresh });
+}
+
 /* budget file: columns Category, Monthly budget, Type (Expense or Income, optional). No Date column. */
 function isBudgetFile(rows) {
   const h = (rows[0] || []).map(c => String(c).trim().toLowerCase());
@@ -1092,12 +1118,26 @@ function dupChecker() {
   const all = Object.values(months).flat(), keys = new Set(all.map(txKey)), rec = new Map();
   for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt') { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
   const days = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
-  return (date, amount, desc, type) => {
+  const recs = all.filter(t => t.src === 'recurring');
+  const fn = (date, amount, desc, type) => {
     if (keys.has(`${date}|${(+amount).toFixed(2)}|${String(desc).toLowerCase()}`)) return true;
     if (type !== 'expense') return false;
     for (const r of rec.values()) if (!r.used && Math.abs(r.total - amount) < 0.005) { const d = days(r.date, date); if (d >= 0 && d <= 4) { r.used = true; return true; } }
     return false;
   };
+  /* a recurring bill this bank line pays: same type, within 4 days, amount within 10% (bills like power vary) */
+  const taken = new Set();
+  fn.billFor = (date, amount, type) => {
+    let best = null, bd = 99;
+    for (const t of recs) {
+      if (taken.has(t.id) || t.type !== type) continue;
+      const d = Math.abs(days(t.date, date)), a = +t.amount || 0;
+      if (d <= 4 && Math.abs(a - amount) <= Math.max(1, a * 0.1) && d < bd) { best = t; bd = d; }
+    }
+    if (best) taken.add(best.id);
+    return best;
+  };
+  return fn;
 }
 function importRows(ctx) {
   const isDup = dupChecker();
@@ -1116,7 +1156,8 @@ function importRows(ctx) {
     const fc = m.cat >= 0 ? fileCat(r[m.cat], type) : { cat: '', isNew: false };
     const cat = fc.cat || suggestCat(desc, type) || 'Other';
     const dup = isDup(date, amount, desc, type);
-    out.push({ id: uid() + out.length, date, amount, desc, cat, type, src: 'import', dup, fromFile: !!fc.cat, newCat: fc.isNew });
+    const bill = dup ? null : isDup.billFor(date, amount, type);
+    out.push({ id: uid() + out.length, date, amount, desc, cat: bill && !fc.cat ? bill.cat : cat, type, src: 'import', dup, fromFile: !!fc.cat, newCat: fc.isNew, takes: bill ? bill.id : '' });
   }
   return out;
 }
@@ -1126,6 +1167,7 @@ function openImport(ctx) {
     <div class="note">Choose a bank export (CSV) or a spreadsheet (Excel or CSV). If the file has a Category column, the app uses it and learns each store. Otherwise it picks categories itself. It skips transactions you already have.</div>
     <div class="note">A goals file works too: columns Goal, Target, Saved and Due (year-month).</div>
     <div class="note">So does a budget file: columns Category, Monthly budget and Type.</div>
+    <div class="note">And a recurring bills file: columns Name, Amount, Category, Type, Frequency and Next date.</div>
     <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
     <button type="button" class="link" style="align-self:flex-start" data-act="imports">See or delete earlier imports</button>
     <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
@@ -1153,7 +1195,7 @@ function openImport(ctx) {
     : `<div class="grid2">${col('mp-debit', 'Money out', ctx.map.debit, true)}${col('mp-credit', 'Money in', ctx.map.credit, true)}</div>`}
   <div class="grid2">${col('mp-cat', 'Category', ctx.map.cat, true)}${col('mp-kind', 'Expense or income', ctx.map.kind, true)}</div>
   ${newCats.length ? `<div class="note">New categories to add: ${newCats.map(t => esc(t.cat)).join(', ')}.</div>` : ''}
-  <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app</span></div>
+  <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app</span>${items.filter(t => t.takes && !t.dup).length ? ` · <span class="muted num">${items.filter(t => t.takes && !t.dup).length} pay recurring bills</span>` : ''}</div>
   <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found. Check the columns above.</div>'}</div>
   <div class="note">${ctx.map.cat >= 0 ? 'Categories come from your file. Empty ones are picked by the app.' : 'Items the app can\u2019t match go to Other.'} Fix any later and the app learns the store.</div>
   <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>${replaceBtn(ctx, items)}`, ctx);
@@ -1222,6 +1264,7 @@ async function readCSV(file) {
       const rows = sheetRows(ws).filter(r => r.some(c => String(c).trim() !== ''));
       if (rows.length < 1) { toast('That spreadsheet has no rows.'); return; }
       if (isBudgetFile(rows)) { openBudgetImport(rows); return; }
+      if (isBillsFile(rows)) { openBillsImport(rows); return; }
       const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
       const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
       openImport({ kind: 'import', rows, map, cols });
@@ -1234,6 +1277,7 @@ async function readCSV(file) {
     const gh = rows[0].map(c => String(c).trim().toLowerCase());
     if (gh.includes('goal') && gh.includes('target')) { openGoalImport(rows); return; }
     if (isBudgetFile(rows)) { openBudgetImport(rows); return; }
+    if (isBillsFile(rows)) { openBillsImport(rows); return; }
     const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
     const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
     openImport({ kind: 'import', rows, map, cols });
@@ -1258,7 +1302,9 @@ async function runImport(replace) {
   for (const t of fresh) {
     if (t.newCat) { const list = t.type === 'income' ? config.income : config.expense; if (!matchCat(t.cat, t.type)) { list.push({ name: t.cat, planned: 0 }); added++; } }
     if (t.fromFile) learn(t.desc, t.type, t.cat);
-    const { dup, fromFile, newCat, ...tx } = t; tx.batch = batch.id; const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
+    const { dup, fromFile, newCat, takes, ...tx } = t; tx.batch = batch.id;
+    if (takes) { for (const mk2 of Object.keys(months)) { const n = months[mk2].length; months[mk2] = months[mk2].filter(x => x.id !== takes); if (months[mk2].length !== n) touched.add(mk2); } tx.id = takes; }
+    const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
   }
   closeSheet(); render(); await saveMonths([...touched]); await saveConfig();
   toast(`Imported ${fresh.length} transactions${added ? ` and ${added} new categor${added === 1 ? 'y' : 'ies'}` : ''}`);
@@ -1392,6 +1438,7 @@ document.addEventListener('click', async e => {
     case 'recdel': deleteRecurring(el); break;
     case 'goaledit': openGoal(el.dataset.id); break;
     case 'goalsave': saveGoal(); break;
+    case 'billsimportgo': { const bs = sheetCtx.bills || []; for (const b of bs) config.recurring.push({ id: uid(), ...b, skip: [] }); closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
     case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
     case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
     case 'goaldel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.goals = config.goals.filter(g => g.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Goal deleted'); break;
