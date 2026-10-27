@@ -157,7 +157,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{filter:var(--picker)}
 .planinput{width:96px;min-height:40px;padding:0 10px;border-radius:var(--r-sm);border:1px solid var(--field-line);background:var(--field);text-align:right;font-size:16px}
 .tablebox{overflow-x:auto;margin:0 -4px}
 table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
-th,td{padding:8px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--divider)}
+th,td{padding:8px 4px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--divider)}
 th:first-child,td:first-child{text-align:left}
 th{color:var(--muted);font-weight:700;font-size:12px}
 tr.total td{font-weight:800;border-bottom:0}
@@ -346,14 +346,8 @@ function totals(key) {
   for (const t of txOf(key)) { if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; }
   return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp) };
 }
-function startBalance(key) {
-  // Starting balance is set once; every later month starts where the previous one ended.
-  if (key < config.startMonth) return null;
-  let b = +config.startingBalance || 0;
-  for (let k = config.startMonth; k < key; k = addMonths(k, 1)) b += totals(k).net;
-  return round2(b);
-}
-function endBalance(key) { const s = startBalance(key); return s == null ? null : round2(s + totals(key).net); }
+function startBalance(key) { return key < config.startMonth ? null : balanceAt(addDaysIso(`${key}-01`, -1)); }
+function endBalance(key) { return key < config.startMonth ? null : balanceAt(`${key}-${pad(daysIn(key))}`); }
 function catActual(key, type, name) { let s = 0; for (const t of txOf(key)) if (t.type === type && t.cat === name) s += +t.amount || 0; return round2(s); }
 /* periods: a calendar month, or a Monday to Sunday week. Weekly plans are 12/52 of the monthly plan. */
 const WEEK_FACTOR = 12 / 52;
@@ -363,13 +357,28 @@ function monthPeriod(k) { return { kind: 'month', from: `${k}-01`, to: `${k}-${p
 function curPeriod() { return ui.period === 'week' ? { kind: 'week', from: ui.week, to: addDaysIso(ui.week, 6), factor: WEEK_FACTOR } : monthPeriod(ui.month); }
 function txRange(p) { const out = []; for (let k = p.from.slice(0, 7); k <= p.to.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date >= p.from && t.date <= p.to) out.push(t); return out; }
 function totalsP(p) { let inc = 0, exp = 0; for (const t of txRange(p)) { if (t.type === 'income') inc += +t.amount || 0; else exp += +t.amount || 0; } return { inc: round2(inc), exp: round2(exp), net: round2(inc - exp) }; }
-function balanceAt(iso) {
-  const s = `${config.startMonth}-01`; if (iso < s) return null;
-  let b = +config.startingBalance || 0;
-  for (let k = config.startMonth; k <= iso.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date <= iso) b += t.type === 'income' ? +t.amount || 0 : -(+t.amount || 0);
-  return round2(b);
+/* The app's balance: every account added together, with credit card balances taken off.
+   Pinned to the latest bank balances you read in, then worked backwards and forwards with your transactions,
+   so it can't drift away from the bank. With no balances read in, it runs on from the starting balance. */
+function balanceAnchor() {
+  const list = Object.values(config.accounts || {}).filter(x => x.at && x.balance != null && isFinite(+x.balance)); if (!list.length) return null;
+  const date = isoDate(new Date(Math.max(...list.map(x => x.at))));
+  let v = 0, cards = 0; for (const x of list) { v += +x.balance; if (isCardAcct(x)) cards += +x.balance; }
+  // pending items are in the app already but not yet in the bank balance
+  for (let k = addMonths(date.slice(0, 7), -1); k <= date.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.pending && t.date <= date) v += t.type === 'income' ? +t.amount || 0 : -(+t.amount || 0);
+  return { date, v: round2(v), cards: round2(cards) };
 }
-function periodStartBalance(p) { const s = `${config.startMonth}-01`; if (p.to < s) return null; return p.from <= s ? round2(+config.startingBalance || 0) : balanceAt(addDaysIso(p.from, -1)); }
+function netBetween(fromExcl, toIncl) {
+  let n = 0; for (let k = fromExcl.slice(0, 7); k <= toIncl.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date > fromExcl && t.date <= toIncl) n += t.type === 'income' ? +t.amount || 0 : -(+t.amount || 0);
+  return n;
+}
+function balanceAt(iso) {
+  const s = `${config.startMonth}-01`; if (iso < addDaysIso(s, -1)) return null;
+  const a = balanceAnchor();
+  if (a) return round2(iso >= a.date ? a.v + netBetween(a.date, iso) : a.v - netBetween(iso, a.date));
+  return round2((+config.startingBalance || 0) + netBetween(addDaysIso(s, -1), iso));
+}
+function periodStartBalance(p) { const s = `${config.startMonth}-01`; if (p.to < s) return null; return balanceAt(addDaysIso(p.from < s ? s : p.from, -1)); }
 function catRows(p, type) {
   const list = config[type === 'income' ? 'income' : 'expense'];
   const names = list.map(c => c.name), tx = txRange(p).filter(t => t.type === type);
@@ -526,13 +535,13 @@ function viewHome() {
     accounts: () => viewAccounts(),
     month: () => `${periodBar()}
   <section class="glass card" aria-label="Balance">
-    <div class="small muted" style="font-weight:600">Balance at end of ${word}</div>
+    <div class="small muted" style="font-weight:600">Balance at end of ${word}</div><div class="tiny muted" style="margin-top:-8px">All accounts, less credit card balances</div>
     <div class="big num">${eb == null ? '—' : money(eb)}</div>
     <div class="row" style="flex-wrap:wrap">
       <span class="chip ${saved ? '' : 'over'} num">${saved ? '+' + money(tt.net) + ' saved this ' + word : '−' + money(-tt.net) + ' spent beyond income'}</span>
       <span class="small muted num">${sb == null ? 'Before your start month' : 'Started at ' + money(sb)}</span>
     </div>
-    ${!config.startingBalance && mode !== 'wait' ? `<button type="button" class="link" style="align-self:flex-start" data-act="settings">Set your starting balance</button>` : ''}
+    ${!config.startingBalance && !balanceAnchor() && mode !== 'wait' ? `<button type="button" class="link" style="align-self:flex-start" data-act="settings">Set your starting balance</button>` : ''}
   </section>`,
     alerts: () => alerts.length ? `<section class="glass card" aria-label="Budget alerts"><div class="h2">Budget alerts</div>${alerts.slice(0,4).map(r => `<div class="alert"><span class="dot ${r.status === 'over' ? 'over' : ''}" aria-hidden="true"></span><span style="flex:1">${esc(r.name)}</span><span class="chip ${r.status} num">${r.status === 'over' ? 'Over by ' + money(-r.diff) : Math.round(r.pct*100) + '% used'}</span></div>`).join('')}</section>` : '',
     weekly: () => viewWeekly(),
@@ -626,8 +635,8 @@ function viewYear() {
   <section class="glass card"><div class="row between"><div class="h2">Income and expenses</div><div class="legend"><span><b style="background:var(--accent)"></b>Income</span><span><b style="background:var(--warn)"></b>Expenses</span></div></div>
     <div class="chart" role="img" aria-label="Monthly income and expenses for ${y}">${data.map((d, i) => `<div class="col"><div class="pair"><i class="inc" style="height:${Math.round(d.inc / maxV * 96)}px"></i><i class="exp" style="height:${Math.round(d.exp / maxV * 96)}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[i]}</span></div>`).join('')}</div></section>
   <section class="glass card"><div class="h2">Summary</div><div class="tablebox"><table>
-    <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>End balance</th></tr></thead>
-    <tbody>${data.map((d, i) => `<tr><td>${MONTHS[i].slice(0,3)}</td><td>${money0(d.inc)}</td><td>${money0(d.exp)}</td><td class="${d.net < 0 ? 'neg' : ''}">${money0(d.net)}</td><td>${d.end == null ? '—' : money0(d.end)}</td></tr>`).join('')}
+    <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>Balance</th></tr></thead>
+    <tbody>${data.map((d, i) => `<tr><td>${MONTHS[i].slice(0,3)}</td><td>${money0(d.inc)}</td><td>${money0(d.exp)}</td><td class="${d.net < 0 ? 'neg' : ''}">${money0(d.net)}</td><td class="${d.end != null && d.end < 0 ? 'neg' : ''}">${d.end == null || d.k > mk(today()) ? '—' : money0(d.end)}</td></tr>`).join('')}
     <tr class="total"><td>Total</td><td>${money0(tInc)}</td><td>${money0(tExp)}</td><td class="${tInc - tExp < 0 ? 'neg' : ''}">${money0(tInc - tExp)}</td><td></td></tr>
     <tr class="total"><td>Average</td><td>${money0(avgPositive(data.map(d => d.inc)))}</td><td>${money0(avgPositive(data.map(d => d.exp)))}</td><td>${money0(avgPositive(data.map(d => d.net)))}</td><td></td></tr></tbody></table></div>
     <div class="tiny muted">Averages count only months with activity.</div></section>
@@ -737,6 +746,9 @@ function billsBetween(fromExcl, toIncl, type = 'expense') {
 }
 /* cash you can count on: bank balances from screenshots when they're recent, otherwise the app's own balance */
 const isCardAcct = x => x.kind ? x.kind === 'card' : (/card|neo|credit|ifnf|mastercard|visa|latitude/i.test(x.name || '') || (+x.balance || 0) < 0);
+/* savings accounts: picked by hand in Savings or Accounts, otherwise any account named savings or goal */
+const isSavingsAcct = x => !isCardAcct(x) && (x.kind ? x.kind === 'savings' : /sav|goal/i.test(x.name || ''));
+const acctKey = x => x.last4 || x.name;
 function cashNow() {
   const now = isoDate(today()), list = Object.values(config.accounts || {}).filter(x => !isCardAcct(x) && x.count !== false);
   const fresh = list.filter(x => x.at && Date.now() - x.at < 36 * 3600000);
@@ -744,7 +756,7 @@ function cashNow() {
     const v = round2(list.reduce((a, x) => a + (x.available != null ? +x.available : +x.balance || 0), 0));
     return { v, src: 'bank', at: Math.min(...list.map(x => x.at)) };
   }
-  const b = balanceAt(now); return b == null ? null : { v: b, src: 'app' };
+  const b = balanceAt(now), a = balanceAnchor(); return b == null ? null : { v: round2(b - (a ? a.cards : 0)), src: 'app' };
 }
 /* walk forward day by day: bills out, base pay in, and find the lowest point */
 function forecast(opt = {}) {
@@ -1019,9 +1031,9 @@ async function saveExtra() {
 function viewDebts() {
   const rows = debtRows(), now = isoDate(today());
   const total = round2(rows.reduce((a, r) => a + r.bal, 0)), weekly = round2(rows.reduce((a, r) => a + (r.bal > 0 ? r.weekly : 0), 0));
-  const cash = balanceAt(now), nw = cash == null ? null : round2(cash - total);
+  const anc = balanceAnchor(), cardAdj = anc ? anc.cards : 0, cash0 = balanceAt(now), cash = cash0 == null ? null : round2(cash0 - cardAdj), nw = cash == null ? null : round2(cash - total);
   const ends = Array.from({ length: 12 }, (_, i) => { const k = addMonths(mk(today()), i - 11); return i === 11 ? now : `${k}-${pad(daysIn(k))}`; });
-  const hist = ends.map(e => { const c = balanceAt(e); return c == null ? null : round2(c - (config.debts || []).reduce((a, d) => a + debtBalanceAt(d, e), 0)); });
+  const hist = ends.map(e => { const c = balanceAt(e); return c == null ? null : round2(c - cardAdj - (config.debts || []).reduce((a, d) => a + debtBalanceAt(d, e), 0)); });
   const vals = hist.filter(v => v != null), maxAbs = Math.max(1, ...vals.map(Math.abs));
   const first = vals[0], change = vals.length > 1 ? round2(vals[vals.length - 1] - first) : null;
   const live = rows.filter(r => r.bal > 0.005), stuck = live.filter(r => r.never), dated = live.filter(r => r.payoffIso).sort((a, b) => a.payoffIso.localeCompare(b.payoffIso));
@@ -1278,7 +1290,7 @@ function openAcct(k) {
   openSheet(`${sheetHead('Account')}
   <div class="field"><label for="a-name">Name</label><input class="input" id="a-name" value="${esc(x.name || '')}"></div>
   <div class="grid2"><div class="field"><label for="a-last4">Last 4 digits</label><input class="input num" id="a-last4" inputmode="numeric" maxlength="4" value="${esc(x.last4 || '')}"></div>
-  <div class="field"><label for="a-kind">Type</label><select class="input" id="a-kind">${[['bank', 'Bank account'], ['savings', 'Savings'], ['card', 'Credit card']].map(([v, l]) => `<option value="${v}" ${(x.kind || (isCardAcct(x) ? 'card' : 'bank')) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+  <div class="field"><label for="a-kind">Type</label><select class="input" id="a-kind">${[['bank', 'Bank account'], ['savings', 'Savings'], ['card', 'Credit card']].map(([v, l]) => `<option value="${v}" ${(isCardAcct(x) ? 'card' : isSavingsAcct(x) ? 'savings' : 'bank') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
   <label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="a-count" ${x.count !== false ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Count this money in Safe to spend</span></label>
   <div class="note">Credit cards are never counted. The name you set here stays when you read new screenshots.</div>
   <button type="button" class="btn primary block" data-act="acctsave">Save</button>
@@ -1329,7 +1341,7 @@ function essentials() {
 }
 /* real money in savings accounts; pots and the safety net divide it up */
 function savingsBalance() {
-  const list = Object.values(config.accounts || {}).filter(x => !isCardAcct(x) && (x.kind === 'savings' || (!x.kind && /sav|goal|holding/i.test(x.name || ''))));
+  const list = Object.values(config.accounts || {}).filter(isSavingsAcct);
   if (list.length) return { v: round2(list.reduce((a, x) => a + (+x.balance || 0), 0)), names: list.map(x => x.name) };
   return { v: +(config.safety || {}).manual || 0, names: [] };
 }
@@ -1347,8 +1359,10 @@ function viewSavings() {
     <div class="small muted" style="font-weight:600">Total savings</div>
     <div class="big num">${money(st.bal.v)}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip num">Allocated ${money0(st.allocated)}</span><span class="chip ${st.free < 0 ? 'over' : ''} num">${st.free < 0 ? `Over-allocated by ${money0(-st.free)}` : `Free ${money0(st.free)}`}</span></div>
-    <div class="tiny muted">${st.bal.names.length ? 'From ' + st.bal.names.map(esc).join(', ') + '. Mark accounts as Savings in Accounts.' : 'No savings account found. Mark one as Savings in Accounts, or enter your savings below.'}</div>
-    ${st.bal.names.length ? '' : `<button type="button" class="link" style="align-self:flex-start" data-act="savmanual">Enter savings balance</button>`}
+    ${(() => { const acc = Object.values(config.accounts || {}).filter(x => !isCardAcct(x)); return acc.length ? `<div class="h2" style="margin-top:4px">Accounts in savings</div>
+    <div class="list">${acc.map(x => { const on = isSavingsAcct(x); return `<button type="button" class="row between" data-act="savacct" data-k="${esc(acctKey(x))}" aria-pressed="${on}" style="gap:10px;min-height:48px;border:0;border-bottom:1px solid var(--divider);background:transparent;color:inherit;padding:0;font:inherit;text-align:left;width:100%"><span style="width:24px;height:24px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;${on ? 'background:var(--accent);color:var(--accent-ink)' : 'border:1.5px solid var(--field-line)'}" aria-hidden="true">${on ? '✓' : ''}</span><span style="flex:1;min-width:0"><span style="font-weight:600">${esc(x.name)}</span>${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</span><span class="num muted">${money(x.balance || 0)}</span></button>`; }).join('')}</div>
+    <div class="tiny muted">Tick the accounts that hold your savings. Only ticked accounts count in Total savings.</div>` : ''; })()}
+    ${st.bal.names.length ? '' : `<div class="tiny muted">No savings account ticked. Tick one above, or enter your savings by hand.</div><button type="button" class="link" style="align-self:flex-start" data-act="savmanual">Enter savings balance</button>`}
   </section>
   <section class="glass card" aria-label="Safety net">
     <div class="row between"><div class="h2">Safety net</div><button type="button" class="link" data-act="essentials">Living costs</button></div>
@@ -2320,6 +2334,7 @@ document.addEventListener('click', async e => {
     case 'move': { const key = el.dataset.kind === 'home' ? 'homeOrder' : 'planOrder', list = ordered(el.dataset.kind === 'home' ? HOME_SECTIONS : PLAN_TABS, config[key]).map(x => x[0]), i = list.indexOf(el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; config[key] = list; openArrange(); render(); await saveConfig(); break; }
     case 'arrangereset': config.homeOrder = []; config.planOrder = []; config.homeHidden = []; openArrange(); render(); await saveConfig(); break;
     case 'acctedit': openAcct(el.dataset.k); break;
+    case 'savacct': { const x = (config.accounts || {})[el.dataset.k]; if (!x) break; x.kind = isSavingsAcct(x) ? 'bank' : 'savings'; x.kindSet = true; render(); await saveConfig(); break; }
     case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, kindSet: true, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
     case 'acctdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; } delete config.accounts[sheetCtx.k]; closeSheet(); render(); await saveConfig(); toast('Account removed'); break;
     case 'shotgo': runShotImport(); break;
