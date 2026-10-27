@@ -230,14 +230,14 @@ const KEYWORDS_EXP = [
   [/netflix|spotify|disney|\bstan\b|binge|kayo|apple\.com|icloud|youtube|prime video|amazon prime|audible|chatgpt|claude\.ai|anthropic|adobe|microsoft 365|xbox|playstation/i,'Subscriptions'],
   [/origin|\bagl\b|energyaustralia|red energy|alinta|momentum energy|telstra|optus|vodafone|aussie broadband|\btpg\b|yarra valley water|south east water|greater western water|council/i,'Utilities'],
   [/chemist|priceline|pharmacy|medical|dental|dentist|physio|hospital|pathology|optometr|specsavers/i,'Health/Medical'],
-  [/bunnings|ikea|kmart|\btarget\b|big w|harvey norman|jb ?hi-?fi|officeworks|good guys|rent\b|real estate/i,'Home'],
+  [/ikea|harvey norman|jb ?hi-?fi|officeworks|good guys|rent\b|real estate/i,'Home'],
   [/petbarn|pet ?stock|\bvet\b|veterinary/i,'Pets'],
   [/qantas|virgin australia|jetstar|airbnb|booking\.com|expedia|hotel|motel|webjet/i,'Travel'],
   [/aami|allianz|budget direct|racv|youi|nrma|\bnib\b|bupa|medibank|\bhcf\b|insurance/i,'Insurance'],
   [/afterpay|zip ?pay|\bloan\b|credit card|humm/i,'Debt'],
   [/vanguard|commsec|\bstake\b|selfwealth|raiz|spaceship|pearler|superhero/i,'Investments'],
   [/gift|florist|flowers/i,'Gifts'],
-  [/hair|barber|cotton on|uniqlo|myer|david jones|rebel|gym|fitness|cinema|hoyts|village/i,'Personal']
+  [/bunnings|kmart|\btarget\b|big w|hair|barber|cotton on|uniqlo|myer|david jones|rebel|gym|fitness|cinema|hoyts|village/i,'Personal']
 ];
 const KEYWORDS_INC = [
   [/salary|wage|payroll|\bpay\b|pay ?cheque|paycheck/i,'Paycheck'],
@@ -282,7 +282,7 @@ function defaultConfig() {
   return { v: 1, startingBalance: 0, startMonth: mk(today()),
     expense: EXP_DEFAULT.map(name => ({ name, planned: 0 })),
     income: INC_DEFAULT.map(name => ({ name, planned: 0 })),
-    rules: {}, recurring: [], goals: [], imports: [] };
+    rules: {}, itemRules: {}, recurring: [], goals: [], imports: [] };
 }
 let config = defaultConfig();
 let months = {};                 // 'YYYY-MM' -> [tx]
@@ -297,6 +297,7 @@ function mergeConfig(d) {
   const c = Object.assign(defaultConfig(), clone(d || {}));
   for (const k of ['expense','income','recurring','goals','imports']) if (!Array.isArray(c[k])) c[k] = defaultConfig()[k];
   if (!c.rules || typeof c.rules !== 'object') c.rules = {};
+  if (!c.itemRules || typeof c.itemRules !== 'object') c.itemRules = {};
   return c;
 }
 function saveLocal() {
@@ -654,9 +655,10 @@ function catOptions(type, sel) {
 
 function openTxSheet(tx, prefill) {
   const t = tx ? clone(tx) : Object.assign({ type: 'expense', date: isoDate(today()), amount: '', desc: '', cat: '', src: 'manual' }, prefill || {});
-  const canScan = !tx;
+  const canScan = !tx || t.type === 'expense';
   openSheet(`${sheetHead(tx ? 'Edit transaction' : 'New transaction')}
-  ${canScan ? `<label class="scan" for="f-receipt">${I.cam}<span id="scanLabel">Scan a receipt</span><input id="f-receipt" type="file" accept="image/*"></label><div class="note" id="scanStatus" hidden></div>` : ''}
+  ${canScan ? `<label class="scan" for="f-receipt">${I.cam}<span id="scanLabel">${tx ? 'Scan the receipt to split by category' : 'Scan a receipt'}</span><input id="f-receipt" type="file" accept="image/*"></label><div class="note" id="scanStatus" hidden></div><div class="glass card" id="splitBox" style="border-radius:var(--r-md);gap:10px" hidden></div>` : ''}
+  ${t.items && t.items.length ? `<div class="note">From the receipt: ${t.items.map(i => `${esc(i.name)} ${money(i.amount)}`).join(', ')}</div>` : ''}
   <div class="seg" role="group" aria-label="Type"><button type="button" data-act="settype" data-t="expense" aria-pressed="${t.type === 'expense'}">Expense</button><button type="button" data-act="settype" data-t="income" aria-pressed="${t.type === 'income'}">Income</button></div>
   <div class="field"><label for="f-amount">Amount (AUD)</label><input class="input amount-input num" id="f-amount" inputmode="decimal" placeholder="$0.00" value="${t.amount === '' ? '' : esc(t.amount)}" ${tx ? '' : 'autofocus'}></div>
   <div class="field"><label for="f-desc">Description</label><input class="input" id="f-desc" placeholder="Store or note" value="${esc(t.desc)}" autocomplete="off"></div>
@@ -714,6 +716,73 @@ function parseReceipt(text) {
   }
   return { merchant, total, date };
 }
+/* receipt line items: each item gets a category, so one receipt can be split across categories */
+const ITEM_RULES = [
+  [/\b(dog|cat|puppy|kitten|pet|kibble|litter|schmackos|whiskas|pedigree|optimum|dine)\b/i, 'Pets'],
+  [/\b(unleaded|diesel|petrol|fuel|e10|ulp|u91|u95|u98|premium ?9[58]|vortex|engine oil|coolant|wiper|car wash|tyre)\b/i, 'Transportation'],
+  [/\b(panadol|nurofen|ibuprofen|paracetamol|vitamins?|supplements?|tablets?|capsules?|band-?aids?|plasters?|antiseptic|cold ?& ?flu|cough|antihistamine|zyrtec|claratyne|telfast|script|prescription|medicine|sunscreen|condoms?)\b/i, 'Health/Medical'],
+  [/\b(gift ?card|gift ?wrap|wrapping|birthday card|greeting card|balloons?)\b/i, 'Gifts'],
+  [/\b(toilet ?paper|toilet ?tissue|paper towel|tissues?|detergent|laundry|dishwash\w*|dish ?liquid|cleaner|bleach|disinfect\w*|sponges?|scourer|bin ?bags?|garbage|rubbish|foil|cling|glad ?wrap|zip ?lock|storage|containers?|globes?|bulbs?|batter(y|ies)|towels?|sheets?|pillows?|doona|quilt|cushions?|curtains?|rugs?|door ?mat|plants?|potting|soil|mulch|garden|hose|screws?|nails? (?:pk|\d)|paint|tape|glue|drill|timber|hooks?|frames?|candles?|vases?|frying pan|saucepan|plates?|bowls?|mugs?|cutlery|kettle|toaster|air freshener|mop|broom|bucket|pegs?|hangers?)\b/i, 'Home'],
+  [/\b(shampoo|conditioner|soap|body ?wash|deodorant|deo|razors?|shave|shaving|toothpaste|toothbrush|floss|mouthwash|lotion|moisturi\w*|makeup|mascara|lipstick|perfume|cologne|hair|tobacco|cigarettes?|cigs|smokes|winfield|marlboro|peter jackson|vapes?|lighter|shirt|tee|t-shirt|jeans|pants|trackies|shorts|socks?|jocks|undies|underwear|bra|dress|skirt|jacket|hoodie|jumper|shoes?|sneakers?|thongs|hat|cap|beanie|wallet|watch|toys?|games?|lego|books?|magazine|phone|charger|cable|headphones?|earbuds?|speaker)\b/i, 'Personal'],
+  [/\b(milk|bread|eggs?|cheese|butter|yog\w*|chicken|beef|mince|pork|lamb|sausages?|snags|bacon|ham|fish|salmon|tuna|prawns?|rice|pasta|noodles?|sauce|flour|sugar|cereal|oats?|coffee|tea|juice|water|soft ?drink|coke|pepsi|cola|sprite|fanta|chips|crisps|doritos|smiths|biscuits?|tim ?tam|choc\w*|lolly|lollies|snacks?|fruit|apples?|bananas?|oranges?|grapes?|berr(y|ies)|tomato\w*|potato\w*|onions?|carrots?|lettuce|salad|veg\w*|avocado|cream|ice ?cream|pizza|pies?|frozen|soup|beans|nuts|spread|honey|jam|vegemite|nutella|oil|spice|salt|pepper|wraps?|rolls?|buns?|muffins?|cake|drinks?|energy|monster|red ?bull|mother|beer|wine|vodka|rum|bourbon|scotch|whisky|cider|seltzer|meal|burger|kebab|sandwich|sushi|nuggets|fries|chilled|deli|bakery|produce)\b/i, 'Food']
+];
+function itemCat(name, storeCat) {
+  const k = normKey(name), names = config.expense.map(c => c.name);
+  if (k && config.itemRules[k] && names.includes(config.itemRules[k])) return config.itemRules[k];
+  for (const [re, cat] of ITEM_RULES) if (re.test(name) && names.includes(cat)) return cat;
+  return storeCat || 'Other';
+}
+function parseItems(text) {
+  const lines = String(text || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const priceRe = /(-?\$?\s?\d{1,4}[.,]\d{2})\s*(?:[A-Z*#^]{1,2})?\s*(-)?\s*$/;
+  const stop = /^(sub ?-?total|total|balance due|amount due|to pay)\b/i;
+  const skip = /\b(total|subtotal|gst|tax|change|cash|eftpos|card|visa|mastercard|amex|debit|credit|paid|tendered|rounding|balance|points|rewards|approved|auth|terminal|account|merchant|invoice|abn|phone|items? sold|you saved|savings total|surcharge)\b/i;
+  const disc = /\b(discount|saving|saved|less|promo|member|special|price ?drop|coupon|voucher|multi ?buy)\b/i;
+  const qty = /^\d+(\.\d+)?\s*(@|x|kg|ea)\b/i;
+  const items = []; let pending = '';
+  for (const l of lines) {
+    if (items.length && stop.test(l)) break;
+    const m = l.match(priceRe);
+    if (!m) { pending = (l.match(/[a-z]/gi) || []).length >= 3 && !skip.test(l) ? l : ''; continue; }
+    let name = l.slice(0, m.index).replace(/[$]/g, ' ').replace(/\s+/g, ' ').trim();
+    let v = parseFloat(m[1].replace(/[$\s]/g, '').replace(',', '.'));
+    if (m[2] && v > 0) v = -v;
+    if (skip.test(name) && !disc.test(name)) { pending = ''; continue; }
+    if ((v < 0 || disc.test(name)) && items.length) { const last = items[items.length - 1]; last.amount = round2(last.amount - Math.abs(v)); pending = ''; continue; }
+    if (qty.test(name) || (name.match(/[a-z]/gi) || []).length < 2) { if (pending) name = pending; else { pending = ''; continue; } }
+    pending = '';
+    if (!(v > 0) || v > 5000) continue;
+    items.push({ name: name.replace(/^[^A-Za-z]+/, '').trim() || 'Item', amount: round2(v) });
+  }
+  return items.filter(i => i.amount > 0);
+}
+function splitParts(items, amount, main) {
+  const g = {}; let sum = 0;
+  for (const i of items) { g[i.cat] = (g[i.cat] || 0) + i.amount; sum += i.amount; }
+  const diff = round2(amount - sum);
+  if (diff >= 0) g[main] = (g[main] || 0) + diff;
+  else { const f = amount / sum; for (const k in g) g[k] *= f; }
+  const out = Object.entries(g).map(([cat, v]) => ({ cat, amount: round2(v) })).filter(x => x.amount > 0);
+  out.sort((a, b) => b.amount - a.amount);
+  const fix = round2(amount - out.reduce((a, x) => a + x.amount, 0)); if (out.length && fix) out[0].amount = round2(out[0].amount + fix);
+  return out;
+}
+function renderSplit() {
+  const ctx = sheetCtx, box = $('splitBox'); if (!ctx || !box) return;
+  if (!ctx.items || !ctx.items.length || ctx.type !== 'expense') { box.hidden = true; return; }
+  const main = $('f-cat').value || 'Other', amount = Math.abs(parseMoney($('f-amount').value)) || 0;
+  const sum = round2(ctx.items.reduce((a, i) => a + i.amount, 0)), diff = round2(amount - sum);
+  const parts = splitParts(ctx.items, amount || sum, main);
+  box.hidden = false;
+  box.innerHTML = `<label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="split-on" ${ctx.splitOn ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"><span style="font-weight:700">Split into ${parts.length} categor${parts.length === 1 ? 'y' : 'ies'}</span></label>
+  <div class="small">${parts.map(x => `${esc(x.cat)} <span class="num" style="font-weight:700">${money(x.amount)}</span>`).join(' · ')}</div>
+  ${Math.abs(diff) >= 0.01 ? `<div class="note">${diff > 0 ? `Items add up to ${money(sum)}. The other ${money(diff)} goes to ${esc(main)}.` : `Items add up to ${money(sum)}, more than the total. The app scales them to match.`}</div>` : ''}
+  <details id="splitItems" ${ctx.itemsOpen ? 'open' : ''}><summary class="small" style="cursor:pointer;font-weight:600">Check the ${ctx.items.length} item${ctx.items.length === 1 ? '' : 's'}</summary>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${ctx.items.map((i, k) => `<div class="row" style="gap:8px;align-items:center">
+    <span class="small" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name)}</span><span class="small num">${money(i.amount)}</span>
+    <select class="input" data-item="${k}" aria-label="Category for ${esc(i.name)}" style="width:132px;height:38px;font-size:14px;padding-left:10px">${catOptions('expense', i.cat).replace('<option value="">Choose</option>', '')}</select></div>`).join('')}</div></details>`;
+}
+function learnItems(items) { let ch = false; for (const i of items || []) if (i.touched) { const k = normKey(i.name); if (k && config.itemRules[k] !== i.cat) { config.itemRules[k] = i.cat; ch = true; } } return ch; }
 async function scanReceipt(file) {
   const label = $('scanLabel'), status = $('scanStatus');
   if (!file) return;
@@ -727,12 +796,16 @@ async function scanReceipt(file) {
     if (sheetCtx !== ctx) return;
     const r = parseReceipt(data.text || '');
     if (!r.merchant && !r.total) { label.textContent = 'Scan another receipt'; status.textContent = 'No receipt text was found. Lay the receipt flat in good light, then try again.'; return; }
-    if (r.merchant) $('f-desc').value = r.merchant;
-    if (r.total > 0) $('f-amount').value = r.total.toFixed(2);
-    if (r.date) $('f-date').value = r.date;
-    const cat = suggestCat(r.merchant, 'expense') || suggestCat(lines3(data.text), 'expense');
+    const editing = !!sheetCtx.orig;
+    if (r.merchant && !(editing && $('f-desc').value)) $('f-desc').value = r.merchant;
+    if (r.total > 0 && !(editing && $('f-amount').value)) $('f-amount').value = r.total.toFixed(2);
+    if (r.date && !editing) $('f-date').value = r.date;
+    const cat = (editing && $('f-cat').value) || suggestCat(r.merchant, 'expense') || suggestCat(lines3(data.text), 'expense');
     if (cat) { $('f-cat').innerHTML = catOptions('expense', cat); sheetCtx.catTouched = true; }
-    sheetCtx.src = 'receipt';
+    if (!editing) sheetCtx.src = 'receipt';
+    sheetCtx.items = parseItems(data.text).map(i => ({ ...i, cat: itemCat(i.name, cat) }));
+    sheetCtx.splitOn = new Set(sheetCtx.items.map(i => i.cat)).size > 1;
+    renderSplit();
     label.textContent = 'Scan again';
     const missing = [!r.merchant && 'store', !r.total && 'total', !r.date && 'date', !cat && 'category'].filter(Boolean);
     status.textContent = missing.length ? `Filled what it could read. Please add the ${missing.join(', ')}.` : 'Filled from the receipt. Check the details, then add it.';
@@ -751,6 +824,19 @@ async function saveTx() {
   const problem = !(amount > 0) ? 'Enter an amount above $0.' : !desc ? 'Enter a description.' : !cat ? 'Choose a category.' : !/^\d{4}-\d{2}-\d{2}$/.test(date) ? 'Choose a date.' : '';
   if (problem) { err.hidden = false; err.textContent = problem; return; }
   const key = date.slice(0, 7), touched = new Set([key]);
+  if (ctx.items && ctx.items.length && ctx.splitOn && ctx.type === 'expense') {
+    const parts = splitParts(ctx.items, round2(amount), cat);
+    if (parts.length > 1) {
+      const gid = 'grp-' + uid(), o = ctx.orig;
+      if (o) { const ok = o.date.slice(0, 7); months[ok] = txOf(ok).filter(t => t.id !== o.id); touched.add(ok); }
+      for (const p of parts) (months[key] = months[key] || []).push({ id: uid(), date, amount: p.amount, desc, cat: p.cat, type: 'expense', src: o ? o.src : 'receipt', group: gid,
+        items: ctx.items.filter(i => i.cat === p.cat).map(i => ({ name: i.name, amount: i.amount })), ...(o ? { splitKey: txKey(o) } : {}), ...(o && o.batch ? { batch: o.batch } : {}) });
+      const learned = learnItems(ctx.items);
+      closeSheet(); render(); await saveMonths([...touched]); if (learned) await saveConfig();
+      toast(`Split into ${parts.length} categories`); return;
+    }
+  }
+  if (learnItems(ctx.items)) await saveConfig();
   const tx = { id: ctx.orig ? ctx.orig.id : uid(), date, amount: round2(amount), desc, cat, type: ctx.type, src: ctx.orig ? ctx.orig.src : ctx.src };
   if (ctx.orig) { const ok = ctx.orig.date.slice(0, 7); months[ok] = txOf(ok).filter(t => t.id !== ctx.orig.id); touched.add(ok); }
   (months[key] = months[key] || []).push(tx);
@@ -979,9 +1065,21 @@ function replaceBtn(ctx, items) {
   return `<div class="note">This file overlaps ${ov.map(b => esc(b.name)).join(', ')}. Replace it to remove the old version first, so nothing is lost or doubled.</div>
   <button type="button" class="btn block" data-act="importreplace">Replace ${ov.length === 1 ? 'earlier import' : ov.length + ' earlier imports'} with this file</button>`;
 }
+/* a bank line is already in the app if it matches exactly, was split from a receipt, or matches a scanned receipt's total within 4 days */
+function dupChecker() {
+  const all = Object.values(months).flat(), keys = new Set(all.map(txKey)), rec = new Map();
+  for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt') { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
+  const days = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+  return (date, amount, desc, type) => {
+    if (keys.has(`${date}|${(+amount).toFixed(2)}|${String(desc).toLowerCase()}`)) return true;
+    if (type !== 'expense') return false;
+    for (const r of rec.values()) if (!r.used && Math.abs(r.total - amount) < 0.005) { const d = days(r.date, date); if (d >= 0 && d <= 4) { r.used = true; return true; } }
+    return false;
+  };
+}
 function importRows(ctx) {
-  const existing = new Set(Object.values(months).flat().map(t => `${t.date}|${(+t.amount).toFixed(2)}|${String(t.desc).toLowerCase()}`));
-  if (ctx.tracker) return ctx.tracker.map(t => ({ ...t, dup: existing.has(`${t.date}|${t.amount.toFixed(2)}|${t.desc.toLowerCase()}`) }));
+  const isDup = dupChecker();
+  if (ctx.tracker) return ctx.tracker.map(t => ({ ...t, dup: isDup(t.date, t.amount, t.desc, t.type) }));
   const m = ctx.map, body = m.header ? ctx.rows.slice(1) : ctx.rows, out = [];
   for (const r of body) {
     const date = parseDateStr(r[m.date], m.fmt); if (!date) continue;
@@ -995,7 +1093,7 @@ function importRows(ctx) {
     const amount = round2(Math.abs(v));
     const fc = m.cat >= 0 ? fileCat(r[m.cat], type) : { cat: '', isNew: false };
     const cat = fc.cat || suggestCat(desc, type) || 'Other';
-    const dup = existing.has(`${date}|${amount.toFixed(2)}|${desc.toLowerCase()}`);
+    const dup = isDup(date, amount, desc, type);
     out.push({ id: uid() + out.length, date, amount, desc, cat, type, src: 'import', dup, fromFile: !!fc.cat, newCat: fc.isNew });
   }
   return out;
@@ -1302,10 +1400,13 @@ document.addEventListener('input', e => {
   const id = e.target.id;
   if (id === 'search') { ui.search = e.target.value; render(); }
   else if (id === 'f-desc' && sheetCtx && sheetCtx.kind === 'tx') autoCat(e.target.value);
+  else if (id === 'f-amount' && sheetCtx && sheetCtx.items) renderSplit();
 });
 document.addEventListener('change', async e => {
   const el = e.target;
-  if (el.id === 'f-cat' && sheetCtx) { sheetCtx.catTouched = !!el.value; const h = $('catHint'); if (h) h.hidden = true; }
+  if (el.id === 'f-cat' && sheetCtx) { sheetCtx.catTouched = !!el.value; const h = $('catHint'); if (h) h.hidden = true; if (sheetCtx.items) renderSplit(); }
+  else if (el.id === 'split-on' && sheetCtx) sheetCtx.splitOn = el.checked;
+  else if (el.dataset.item && sheetCtx && sheetCtx.items) { const i = sheetCtx.items[+el.dataset.item]; i.cat = el.value; i.touched = true; sheetCtx.itemsOpen = true; renderSplit(); }
   else if (el.id === 'f-receipt' && el.files && el.files[0]) { scanReceipt(el.files[0]); el.value = ''; }
   else if (el.id === 'r-start' || el.id === 'r-freq') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
@@ -1313,6 +1414,7 @@ document.addEventListener('change', async e => {
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
   else if (el.dataset.plan) { const v = parseMoney(el.value); config[el.dataset.plan][+el.dataset.i].planned = isFinite(v) ? Math.abs(round2(v / (+el.dataset.f || 1))) : 0; render(); await saveConfig(); }
 });
+document.addEventListener('toggle', e => { if (e.target.id === 'splitItems' && sheetCtx) sheetCtx.itemsOpen = e.target.open; }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); });
 
 $('addBtn').disabled = true;
