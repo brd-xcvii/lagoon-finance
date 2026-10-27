@@ -743,33 +743,79 @@ function weekWarning(cat) {
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function debtRe(d) { const w = String(d.match || d.name || '').split(',').map(x => x.trim()).filter(Boolean); return w.length ? new RegExp(w.map(escRe).join('|'), 'i') : null; }
 function debtFlows(d) {
-  const re = debtRe(d); if (!re) return [];
-  return allTx().filter(t => re.test(t.desc) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
+  const re = debtRe(d) || /^\b$/;
+  return allTx().filter(t => t.debtId === d.id || (!t.debtId && re.test(t.desc)) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
 }
+/* a flow counts after the balance date; an extra payment logged on that day counts if logged after the balance was set */
+const afterAsOf = (d, f) => f.date > d.asOf || (f.date === d.asOf && f.t.debtId === d.id && (+f.t.at || 0) > (+d.setAt || 0));
 function debtBalanceAt(d, iso, flows) {
   flows = flows || debtFlows(d); let b = +d.balance || 0;
   const daily = (+d.rate || 0) / 100 / 365;
   if (iso >= d.asOf) {
     let at = d.asOf;
-    for (const f of flows.filter(f => f.date > d.asOf && f.date <= iso).sort((a, c) => a.date.localeCompare(c.date))) { b += b * daily * dayDiff(at, f.date); at = f.date; b -= -f.v; if (b < 0) b = 0; }
+    for (const f of flows.filter(f => afterAsOf(d, f) && f.date <= iso).sort((a, c) => a.date.localeCompare(c.date))) { b += b * daily * dayDiff(at, f.date); at = f.date; b -= -f.v; if (b < 0) b = 0; }
     b += b * daily * dayDiff(at, iso);
   }
   else { for (const f of flows) if (f.date > iso && f.date <= d.asOf) b += -f.v; }
   return round2(Math.max(0, b));
 }
+/* when a debt is paid off at its repayment rate, starting from the next due date of its bill */
+function payoffOf(d, bal) {
+  const now = isoDate(today()), per = +d.repay || 0, pd = PERIOD_DAYS[d.freq] || 7;
+  const re = debtRe(d), bill = re && config.recurring.find(r => (r.type || 'expense') === 'expense' && re.test(r.name));
+  const first = bill ? nextOccurrence(bill, now) : null;
+  if (bal <= 0.005) return { iso: now, label: 'Paid off', never: false };
+  if (per <= 0) return { iso: null, label: 'No repayment set', never: true };
+  if (d.freq === 'once') { const iso = first || now; return per >= bal - 0.005 ? { iso, label: shortDate(iso), never: false } : { iso: null, label: 'One payment won’t clear it', never: true }; }
+  const ip = (+d.rate || 0) / 100 * pd / 365;
+  if (ip > 0 && per <= bal * ip) return { iso: null, label: 'Never at this repayment', never: true };
+  const periods = ip > 0 ? Math.ceil(-Math.log(1 - ip * bal / per) / Math.log(1 + ip)) : Math.ceil(bal / per - 1e-9);
+  const start = first || addDaysIso(now, Math.round(pd));
+  const iso = d.freq === 'monthly' || d.freq === 'quarterly' || d.freq === 'yearly' ? addMonthsIso(start, (periods - 1) * ({ quarterly: 3, yearly: 12 }[d.freq] || 1)) : addDaysIso(start, Math.round((periods - 1) * pd));
+  return { iso, label: shortDate(iso), never: false };
+}
+function addMonthsIso(iso, n) { const k = addMonths(iso.slice(0, 7), n); return `${k}-${pad(Math.min(+iso.slice(8, 10), daysIn(k)))}`; }
 function debtRows() {
   const now = isoDate(today()), from30 = addDaysIso(now, -30);
   return (config.debts || []).map(d => {
     const flows = debtFlows(d), bal = debtBalanceAt(d, now, flows);
     const paid30 = round2(-flows.filter(f => f.v < 0 && f.date > from30).reduce((a, f) => a + f.v, 0));
     const borrowed = round2(flows.filter(f => f.v > 0).reduce((a, f) => a + f.v, 0)), repaid = round2(-flows.filter(f => f.v < 0).reduce((a, f) => a + f.v, 0));
-    const per = +d.repay || 0, weekly = round2(per * 7 / (PERIOD_DAYS[d.freq] || 7));
-    const pd = PERIOD_DAYS[d.freq] || 7, ip = (+d.rate || 0) / 100 * (pd === Infinity ? 0 : pd) / 365, interestPer = bal * ip;
-    const periods = per <= 0 ? 0 : d.freq === 'once' ? 1 : ip > 0 ? (per > interestPer ? Math.ceil(-Math.log(1 - ip * bal / per) / Math.log(1 + ip)) : Infinity) : Math.ceil(bal / per);
-    const payoff = bal <= 0 ? 'Paid off' : per <= 0 ? 'No repayment set' : periods === Infinity ? 'Never at this repayment' : d.freq === 'once' ? 'One payment' : shortDate(addDaysIso(now, Math.round(periods * pd)));
+    const per = +d.repay || 0, pd = PERIOD_DAYS[d.freq] || 7, weekly = pd === Infinity ? 0 : round2(per * 7 / pd);
+    const extra = round2(flows.filter(f => f.t.debtId === d.id && afterAsOf(d, f)).reduce((a, f) => a - f.v, 0));
+    const po = payoffOf(d, bal), base = extra > 0 ? payoffOf(d, bal + extra) : null;
+    const sooner = base && base.iso && po.iso ? Math.round(dayDiff(po.iso, base.iso) / 7) : 0;
     const yearlyInterest = round2(bal * (+d.rate || 0) / 100);
-    return { ...d, bal, paid30, borrowed, repaid, weekly, payoff, yearlyInterest, never: periods === Infinity };
+    return { ...d, bal, paid30, borrowed, repaid, weekly, payoff: po.label, payoffIso: po.iso, never: po.never, extra, sooner, yearlyInterest };
   });
+}
+function openExtra(id) {
+  const d = (config.debts || []).find(x => x.id === id); if (!d) return;
+  const r = debtRows().find(x => x.id === id);
+  openSheet(`${sheetHead('Log an extra payment')}
+  <div class="small"><strong>${esc(d.name)}</strong>: ${money(r.bal)} left, paid off ${esc(r.payoff)}.</div>
+  <div class="field"><label for="x-amount">Extra amount (AUD)</label><input class="input amount-input num" id="x-amount" inputmode="decimal" placeholder="$0.00" autofocus></div>
+  <div class="field"><label for="x-date">Date</label><input class="input" id="x-date" type="date" value="${esc(isoDate(today()))}"></div>
+  <div class="note" id="x-preview">This adds a Debt expense and lowers the balance. When the payment shows in your bank file, the app skips it so it isn’t counted twice.</div>
+  <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
+  <button type="button" class="btn primary block" data-act="extrasave">Log payment</button>`, { kind: 'extra', id });
+}
+function extraPreview() {
+  const ctx = sheetCtx, d = (config.debts || []).find(x => x.id === ctx.id), el = $('x-preview'); if (!d || !el) return;
+  const v = Math.abs(parseMoney($('x-amount').value)); if (!(v > 0)) return;
+  const r = debtRows().find(x => x.id === d.id), before = payoffOf(d, r.bal), after = payoffOf(d, Math.max(0, r.bal - v));
+  const wk = before.iso && after.iso ? Math.round(dayDiff(after.iso, before.iso) / 7) : 0;
+  el.textContent = `Balance drops to ${money(Math.max(0, r.bal - v))}. Paid off ${after.label}${wk > 0 ? `, ${wk} week${wk === 1 ? '' : 's'} sooner` : ''}.`;
+}
+async function saveExtra() {
+  const ctx = sheetCtx, d = (config.debts || []).find(x => x.id === ctx.id);
+  const v = Math.abs(parseMoney($('x-amount').value)), date = $('x-date').value;
+  if (!(v > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { const e = $('formErr'); e.hidden = false; e.textContent = !(v > 0) ? 'Enter an amount above $0.' : 'Choose a date.'; return; }
+  const k = date.slice(0, 7);
+  (months[k] = months[k] || []).push({ id: uid(), date, amount: round2(v), desc: `Extra payment: ${d.name}`, cat: 'Debt', type: 'expense', src: 'manual', debtId: d.id, at: Date.now() });
+  closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveMonth(k);
+  const r = debtRows().find(x => x.id === d.id);
+  toast(`Logged. ${d.name} paid off ${r.payoff}${r.sooner > 0 ? `, ${r.sooner} weeks sooner` : ''}.`);
 }
 function viewDebts() {
   const rows = debtRows(), now = isoDate(today());
@@ -779,7 +825,16 @@ function viewDebts() {
   const hist = ends.map(e => { const c = balanceAt(e); return c == null ? null : round2(c - (config.debts || []).reduce((a, d) => a + debtBalanceAt(d, e), 0)); });
   const vals = hist.filter(v => v != null), maxAbs = Math.max(1, ...vals.map(Math.abs));
   const first = vals[0], change = vals.length > 1 ? round2(vals[vals.length - 1] - first) : null;
-  return `<section class="glass card" aria-label="Net worth">
+  const live = rows.filter(r => r.bal > 0.005), stuck = live.filter(r => r.never), dated = live.filter(r => r.payoffIso).sort((a, b) => a.payoffIso.localeCompare(b.payoffIso));
+  const freeIso = dated.length ? dated[dated.length - 1].payoffIso : null, extraAll = round2(rows.reduce((a, r) => a + r.extra, 0));
+  const freeCard = live.length ? `<section class="glass card" aria-label="Debt free date">
+    <div class="small muted" style="font-weight:600">Debt free at your current repayments</div>
+    <div class="big num">${stuck.length ? 'Not yet' : freeIso ? esc(new Date(freeIso + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })) : '—'}</div>
+    ${stuck.length ? `<div class="note" style="color:var(--over)">${stuck.map(r => esc(r.name)).join(', ')} ${stuck.length === 1 ? 'has' : 'have'} no end date. Set a repayment that beats the interest.</div>` : ''}
+    ${extraAll > 0 ? `<span class="chip num" style="align-self:flex-start">Extra paid ${money0(extraAll)}</span>` : ''}
+    <div style="display:flex;flex-direction:column;gap:6px">${dated.map(r => `<div class="row between small"><span>${esc(r.name)}</span><span class="muted num">${esc(r.payoff)}${r.sooner > 0 ? ` <span style="color:var(--accent)">(${r.sooner} wk sooner)</span>` : ''}</span></div>`).join('')}</div>
+    <div class="tiny muted">Dates count interest only where you set a rate.</div></section>` : '';
+  return `${freeCard}<section class="glass card" aria-label="Net worth">
     <div class="small muted" style="font-weight:600">Net worth: your money minus your debts</div>
     <div class="big num" style="color:${nw != null && nw < 0 ? 'var(--over)' : 'var(--fg)'}">${nw == null ? '—' : (nw < 0 ? '−' : '') + money(Math.abs(nw))}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip num">Debts ${money0(total)}</span><span class="chip num">Repayments ${money0(weekly)} a week</span>${change != null ? `<span class="chip ${change < 0 ? 'over' : ''} num">${change >= 0 ? '+' : '−'}${money0(Math.abs(change))} in 12 months</span>` : ''}</div>
@@ -791,7 +846,8 @@ function viewDebts() {
     <div class="row" style="flex-wrap:wrap;gap:6px"><span class="chip num">${money0(r.weekly)} a week</span><span class="chip num">Paid ${money0(r.paid30)} in 30 days</span><span class="chip ${r.never ? 'over' : ''} num">${esc(r.payoff)}</span>${r.rate ? `<span class="chip warn num">Interest about ${money0(r.yearlyInterest / 12)} a month</span>` : ''}</div>
     ${r.borrowed ? `<div class="tiny muted num">Since ${esc(shortDate(config.startMonth + '-01'))}: borrowed ${money0(r.borrowed)}, repaid ${money0(r.repaid)}${r.kind === 'advance' && r.repaid + r.bal > r.borrowed ? `. Fees so far: about ${money0(r.repaid + r.bal - r.borrowed)}` : ''}.</div>` : ''}
     <div class="tiny muted">Balance from ${esc(shortDate(r.asOf))}, then follows payments matching “${esc(r.match || r.name)}”.</div>
-    <button type="button" class="btn" data-act="debtedit" data-id="${esc(r.id)}">Update balance or edit</button></section>`).join('')
+    ${r.extra > 0 ? `<div class="tiny num" style="color:var(--accent)">Extra paid ${money0(r.extra)}${r.sooner > 0 ? `, ${r.sooner} week${r.sooner === 1 ? '' : 's'} sooner` : ''}.</div>` : ''}
+    <div class="row"><button type="button" class="btn primary" style="flex:1" data-act="extra" data-id="${esc(r.id)}">Log extra payment</button><button type="button" class="btn" data-act="debtedit" data-id="${esc(r.id)}">Edit</button></div></section>`).join('')
     : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No debts added</div><div class="small">Add each loan or advance with today’s balance. The app follows your repayments from there.</div></div>`}
   <button type="button" class="btn block" data-act="debtedit">Add a debt</button>`;
 }
@@ -814,7 +870,7 @@ function openDebt(id) {
 async function saveDebt() {
   const name = $('d-name').value.trim(), bal = Math.abs(parseMoney($('d-bal').value)), repay = Math.abs(parseMoney($('d-repay').value)) || 0;
   if (!name || !isFinite(bal)) { const e = $('formErr'); e.hidden = false; e.textContent = !name ? 'Enter a name.' : 'Enter the balance.'; return; }
-  const rec = { name, balance: round2(bal), asOf: isoDate(today()), repay: round2(repay), freq: $('d-freq').value, match: $('d-match').value.trim() || name, kind: $('d-kind').value, rate: Math.abs(parseMoney($('d-rate').value)) || 0 };
+  const rec = { name, balance: round2(bal), asOf: isoDate(today()), setAt: Date.now(), repay: round2(repay), freq: $('d-freq').value, match: $('d-match').value.trim() || name, kind: $('d-kind').value, rate: Math.abs(parseMoney($('d-rate').value)) || 0 };
   config.debts = config.debts || [];
   if (sheetCtx.id) Object.assign(config.debts.find(x => x.id === sheetCtx.id), rec); else config.debts.push({ id: uid(), ...rec });
   closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast('Debt saved');
@@ -1368,7 +1424,7 @@ function replaceBtn(ctx, items) {
 /* a bank line is already in the app if it matches exactly, was split from a receipt, or matches a scanned receipt's total within 4 days */
 function dupChecker() {
   const all = Object.values(months).flat(), keys = new Set(all.map(txKey)), rec = new Map();
-  for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt') { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
+  for (const t of all) { if (t.splitKey) keys.add(t.splitKey); else if (t.src === 'receipt' || t.debtId) { const g = t.group || t.id, r = rec.get(g) || { date: t.date, total: 0, used: false }; r.total = round2(r.total + (+t.amount || 0)); rec.set(g, r); } }
   const days = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
   const recs = all.filter(t => t.src === 'recurring');
   const fn = (date, amount, desc, type) => {
@@ -1701,8 +1757,10 @@ document.addEventListener('click', async e => {
     case 'watchsave': config.watch = [...document.querySelectorAll('[data-watch]')].filter(x => x.checked).map(x => x.dataset.watch); closeSheet(); render(); await saveConfig(); toast('Weekly limits saved'); break;
     case 'debtedit': openDebt(el.dataset.id); break;
     case 'debtsave': saveDebt(); break;
+    case 'extra': openExtra(el.dataset.id); break;
+    case 'extrasave': saveExtra(); break;
     case 'debtdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.debts = config.debts.filter(d => d.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Debt deleted'); break;
-    case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d); else config.debts.push({ id: uid(), ...d }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
+    case 'debtsimportgo': { const ds = sheetCtx.debts || []; config.debts = config.debts || []; for (const d of ds) { const ex = config.debts.find(x => x.name.toLowerCase() === d.name.toLowerCase()); if (ex) Object.assign(ex, d, { setAt: Date.now() }); else config.debts.push({ id: uid(), ...d, setAt: Date.now() }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast(`Added ${ds.length} debts`); break; }
     case 'billsimportgo': { const bs = sheetCtx.bills || [], rm = (sheetCtx.removals || []).map(n => n.toLowerCase()); config.recurring = config.recurring.filter(r => !rm.includes(r.name.toLowerCase())); for (const b of bs) { const ex = config.recurring.find(r => r.name.toLowerCase() === b.name.toLowerCase()); if (ex) { Object.assign(ex, b); delete ex.day; delete ex.start; } else config.recurring.push({ id: uid(), ...b, skip: [] }); } closeSheet(); await saveConfig(); applyRecurring(); render(); toast(`Added ${bs.length} recurring bills`); break; }
     case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
     case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
@@ -1739,6 +1797,7 @@ document.addEventListener('input', e => {
   if (id === 'search') { ui.search = e.target.value; render(); }
   else if (id === 'f-desc' && sheetCtx && sheetCtx.kind === 'tx') autoCat(e.target.value);
   else if (id === 'f-amount' && sheetCtx && sheetCtx.items) renderSplit();
+  else if (id === 'x-amount' && sheetCtx && sheetCtx.kind === 'extra') extraPreview();
 });
 document.addEventListener('change', async e => {
   const el = e.target;
