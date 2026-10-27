@@ -776,23 +776,38 @@ function viewSafe() {
     ${short ? `<div class="small" style="color:var(--over)">${esc(f.neg.name)} on ${esc(shortDay(f.neg.date))} takes you below zero.</div>` : ''}
   </section>`;
 }
-/* Australian resident tax for 2026-27, with the 2% Medicare levy and the low income tax offset */
-function incomeTax(x) {
-  x = Math.max(0, x);
-  const t = x <= 18200 ? 0 : x <= 45000 ? (x - 18200) * 0.15 : x <= 135000 ? 4020 + (x - 45000) * 0.30 : x <= 190000 ? 31020 + (x - 135000) * 0.37 : 51370 + (x - 190000) * 0.45;
-  const lito = x <= 37500 ? 700 : x <= 45000 ? 700 - (x - 37500) * 0.05 : x <= 66667 ? 325 - (x - 45000) * 0.015 : 0;
-  return Math.max(0, t - lito) + x * 0.02;
+/* ATO Schedule 1 weekly tax table, scale 2 (tax-free threshold claimed): tax = a × x − b, x = whole dollars + 0.99 */
+const WEEKLY_SCALE2 = {
+  2025: [[361, 0, 0], [500, .16, 57.8462], [625, .26, 107.8462], [721, .18, 57.8462], [865, .189, 64.3365], [1282, .3227, 180.0385], [2596, .32, 176.5769], [3653, .39, 358.3077], [Infinity, .47, 650.6154]],
+  /* from 1 July 2026 the 16% rate drops to 15%; rows from $865 up match Brad's 2026-27 payslips, lower rows are close estimates */
+  2026: [[361, 0, 0], [500, .15, 54.2308], [625, .25, 104.2308], [721, .17, 54.2308], [865, .179, 60.7211], [1282, .3227, 185.1923], [2596, .32, 181.7308], [3653, .39, 363.4615], [Infinity, .47, 655.7692]]
+};
+const finYear = iso => { const [y, m] = (iso || isoDate(today())).split('-').map(Number); return m >= 7 ? y : y - 1; };
+function weeklyTax(g, iso) {
+  const t = WEEKLY_SCALE2[finYear(iso)] || WEEKLY_SCALE2[finYear(iso) >= 2026 ? 2026 : 2025], x = Math.floor(Math.max(0, g)) + 0.99;
+  for (const [lim, a, b] of t) if (x < lim) return Math.max(0, Math.round(a * x - b));
+  return 0;
 }
-/* yearly base salary before tax: set by hand, or worked out from the weekly base pay after tax */
+/* tax withheld from one pay: fortnightly pays use the weekly table on half the pay, doubled */
+const payTax = (g, iso) => payInfo().freq === 'fortnightly' ? 2 * weeklyTax(g / 2, iso) : weeklyTax(g, iso);
+/* yearly base salary before tax: set by hand, or worked out from the base pay after tax */
 function baseGrossYear() {
   const p = config.pay || {}; if (+p.grossYear > 0) return +p.grossYear;
-  const pi = payInfo(), net = pi.base * (pi.freq === 'fortnightly' ? 26 : 52); if (!net) return 0;
-  let lo = net, hi = net * 2.2; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (m - incomeTax(m) < net) lo = m; else hi = m; }
-  return round2(lo);
+  const pi = payInfo(), net = pi.base; if (!net) return 0;
+  let lo = net, hi = net * 2.2; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (m - payTax(m) < net) lo = m; else hi = m; }
+  return round2(lo * payPeriods());
 }
-/* tax on one whole pay (base + commission together), worked out as if every pay were that size */
 const payPeriods = () => payInfo().freq === 'fortnightly' ? 26 : 52;
-function payAfterTax(total) { const n = payPeriods(); return round2(total - incomeTax(total * n) / n); }
+/* tax on a commission pay, the way Certags payroll works it out (ATO Schedule 5, method B(ii)):
+   spread the commission over the month's pays (4 weekly or 2 fortnightly), tax one pay of base plus that share,
+   take off the tax on base alone, multiply by the number of pays, then add back the tax on base. */
+function commissionPayTax(total, iso) {
+  const base = baseGrossYear() / payPeriods(), comm = total - base;
+  if (!(base > 0) || comm <= 0) return payTax(total, iso);
+  const P = payInfo().freq === 'fortnightly' ? 2 : 4, tb = payTax(base, iso);
+  return P * (payTax(base + comm / P, iso) - tb) + tb;
+}
+function payAfterTax(total, iso) { return round2(total - commissionPayTax(total, iso)); }
 /* pay before tax for the commission payday: older entries held commission only, so add one base pay */
 const commTotal = c => c.total != null ? +c.total : round2(+c.gross + baseGrossYear() / payPeriods());
 function firstPaydayOf(month, pi) { const [y, m] = month.split('-').map(Number); for (let d = 1; d <= 7; d++) { const iso = `${y}-${pad(m)}-${pad(d)}`; if (new Date(iso + 'T00:00:00').getDay() === pi.weekday) return iso; } return `${month}-01`; }
@@ -802,17 +817,17 @@ function commissionRows() {
   const rows = (config.commissions || []).map(c => {
     const hit = pays.find(t => Math.abs(dayDiff(c.payDate, t.date)) <= 3 && pi.base && t.amount > pi.base * 1.5);
     const total = commTotal(c), actual = hit ? round2(hit.amount) : null;
-    return { ...c, total, est: payAfterTax(total), actual, rate: actual != null && total > 0 ? actual / total : null };
+    return { ...c, total, est: payAfterTax(total, c.payDate), actual, rate: actual != null && total > 0 ? actual / total : null };
   });
   const rated = rows.filter(r => r.rate != null), ratio = rated.length ? rated.reduce((a, r) => a + r.rate, 0) / rated.length : null;
-  for (const r of rows) r.expect = r.actual != null ? r.actual : ratio != null ? round2(r.total * ratio) : r.est;
+  for (const r of rows) r.expect = r.actual != null ? r.actual : r.est;
   return { rows: rows.sort((a, b) => b.month.localeCompare(a.month)), ratio };
 }
 function commPreview() {
   const el = $('c-preview'), g = Math.abs(parseMoney(($('c-gross') || {}).value)), m = ($('c-month') || {}).value; if (!el) return;
   if (!(g > 0) || !/^\d{4}-\d{2}$/.test(m || '')) { el.textContent = ''; return; }
-  const { ratio } = commissionRows(), est = payAfterTax(g), pd = firstPaydayOf(addMonths(m, 2), payInfo());
-  el.textContent = `About ${money(est)} take-home for that whole pay${ratio != null ? ` (your past commission pays suggest ${money(g * ratio)})` : ''}. Paid ${shortDay(pd)}, instead of the usual base pay.`;
+  const pd = firstPaydayOf(addMonths(m, 2), payInfo()), est = payAfterTax(g, pd);
+  el.textContent = `About ${money(est)} take-home for that whole pay, after ${money(g - est)} tax. Paid ${shortDay(pd)}, instead of the usual base pay.`;
 }
 
 /* typical commission: paid with the first pay of each month */
@@ -884,7 +899,7 @@ function openPaySettings() {
   <div class="field"><label for="c-gross">Base + commission, before tax</label><input class="input num" id="c-gross" inputmode="decimal" placeholder="$0.00"></div></div>
   <div class="note" id="c-preview"></div>
   <button type="button" class="btn block" data-act="commadd">Add commission</button>
-  ${(() => { const { rows, ratio } = commissionRows(); return rows.length ? `<div style="display:flex;flex-direction:column;gap:8px">${rows.map(r => `<div class="row between small" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(monthName(r.month).name)} ${esc(String(monthName(r.month).year))} · ${money0(r.total)} pay before tax</div><div class="tiny muted">${r.actual != null ? `Paid ${esc(shortDay(r.payDate))}: ${money(r.actual)} take-home (${Math.round(r.rate * 100)}%)` : `Paid ${esc(shortDay(r.payDate))} · about ${money(r.expect)} take-home`}</div></div><button type="button" class="link" data-act="commdel" data-id="${esc(r.id)}">Remove</button></div>`).join('')}</div>${ratio != null ? `<div class="tiny muted">Estimates use what your past commission pays actually came to: ${Math.round(ratio * 100)}% of the before-tax amount.</div>` : `<div class="tiny muted">Estimates tax the whole pay at 2026-27 rates, as if every pay were that size. Your employer’s withholding may differ a little.</div>`}` : ''; })()}`, { kind: 'pay' });
+  ${(() => { const { rows, ratio } = commissionRows(); return rows.length ? `<div style="display:flex;flex-direction:column;gap:8px">${rows.map(r => `<div class="row between small" style="gap:8px"><div style="min-width:0"><div style="font-weight:600">${esc(monthName(r.month).name)} ${esc(String(monthName(r.month).year))} · ${money0(r.total)} pay before tax</div><div class="tiny muted">${r.actual != null ? `Paid ${esc(shortDay(r.payDate))}: ${money(r.actual)} take-home (${Math.round(r.rate * 100)}%)` : `Paid ${esc(shortDay(r.payDate))} · about ${money(r.expect)} take-home`}</div></div><button type="button" class="link" data-act="commdel" data-id="${esc(r.id)}">Remove</button></div>`).join('')}</div><div class="tiny muted">Tax is worked out the way your payroll does it: the commission is spread over 4 weekly pays and taxed with the ATO weekly table.</div>` : ''; })()}`, { kind: 'pay' });
 }
 
 /* weekly limits for the categories you want to watch */
