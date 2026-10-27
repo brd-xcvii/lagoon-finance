@@ -113,6 +113,12 @@ button{cursor:pointer}
 .list{display:flex;flex-direction:column}
 .tx{display:flex;align-items:center;gap:12px;padding:10px 4px;background:none;border:0;border-bottom:1px solid var(--divider);text-align:left;width:100%;min-width:0}
 .tx:last-child{border-bottom:0}
+.swipe{position:relative;overflow:hidden;touch-action:pan-y;border-bottom:1px solid var(--divider)}
+.swipe:last-child{border-bottom:0}
+.swipe .tx{border-bottom:0;position:relative;z-index:1;will-change:transform}
+.swipe-del{position:absolute;right:0;top:0;bottom:0;width:0;z-index:0;border:0;border-radius:14px;background:var(--over);color:#fff;font-weight:800;font-size:14px;overflow:hidden;white-space:nowrap;display:flex;align-items:center;justify-content:center;padding:0}
+.toast{display:flex;align-items:center;gap:12px}
+.toastbtn{background:none;border:0;color:var(--accent);font-weight:800;font-size:14px;min-height:32px;padding:0 4px}
 .avatar{width:40px;height:40px;flex:none;border-radius:14px;background:var(--glass-2);border:1px solid var(--track);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:var(--muted)}
 .tx .t{flex:1;min-width:0}
 .tx .t div:first-child{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -425,10 +431,10 @@ function monthNav(act) {
 function txRow(t) {
   const sign = t.type === 'income' ? '+' : '−';
   const src = t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.src === 'import' ? ' · Imported' : '';
-  return `<button type="button" class="tx" data-act="edit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}">
+  return `<div class="swipe" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}"><button type="button" class="swipe-del" data-act="swipedel" tabindex="-1" aria-label="Delete ${esc(t.desc)}">Delete</button><button type="button" class="tx" data-act="edit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}">
     <span class="avatar" aria-hidden="true">${esc((t.desc || '?').trim().charAt(0).toUpperCase())}</span>
     <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${src}</div></span>
-    <span class="amt num ${t.type === 'income' ? 'in' : ''}">${sign}${money(t.amount)}</span></button>`;
+    <span class="amt num ${t.type === 'income' ? 'in' : ''}">${sign}${money(t.amount)}</span></button></div>`;
 }
 function statusBar(r) {
   const w = Math.min(100, Math.round(r.pct * 100));
@@ -572,7 +578,7 @@ function viewMore() {
     <button type="button" data-act="settings"><span class="ic">${I.wallet}</span>Starting balance<span class="small muted num" style="margin-left:auto">${money(config.startingBalance)}</span>${I.chev}</button>
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
     <button type="button" data-act="categories"><span class="ic">${I.tag}</span>Categories and store rules${I.chev}</button>
-    <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file (CSV)${I.chev}</button>
+    <button type="button" data-act="import"><span class="ic">${I.upload}</span>Import bank file or spreadsheet${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
   </div></section>
   <section class="glass card" aria-label="Colour theme"><div class="h2">Colour theme</div>
@@ -752,14 +758,55 @@ async function saveTx() {
   if (learn(desc, tx.type, cat)) await saveConfig();
   toast(ctx.orig ? 'Saved' : 'Added');
 }
+async function removeTx(o) {
+  const k = o.date.slice(0, 7);
+  months[k] = txOf(k).filter(t => t.id !== o.id);
+  let rec = null, skipKey = null;
+  if (o.src === 'recurring') { const m = /^rec-(.+?)-(\d{4}-\d{2}(?:-\d{2})?)$/.exec(o.id); rec = m && config.recurring.find(x => x.id === m[1]); if (rec) { skipKey = m[2]; rec.skip = [...new Set([...(rec.skip || []), skipKey])]; } }
+  render(); await saveMonth(k); if (rec) await saveConfig();
+  toast(`Deleted ${o.desc}`, { label: 'Undo', run: async () => {
+    (months[k] = months[k] || []).push(o);
+    if (rec) rec.skip = (rec.skip || []).filter(x => x !== skipKey);
+    render(); await saveMonth(k); if (rec) await saveConfig(); toast('Restored');
+  } });
+}
 async function deleteTx(btn) {
   if (btn.dataset.confirm !== '1') { btn.dataset.confirm = '1'; btn.textContent = 'Tap again to delete'; return; }
-  const o = sheetCtx.orig, k = o.date.slice(0, 7);
-  months[k] = txOf(k).filter(t => t.id !== o.id);
-  let cfg = false;
-  if (o.src === 'recurring') { const m = /^rec-(.+?)-(\d{4}-\d{2}(?:-\d{2})?)$/.exec(o.id); const r = m && config.recurring.find(x => x.id === m[1]); if (r) { r.skip = [...new Set([...(r.skip || []), m[2]])]; cfg = true; } }
-  closeSheet(); render(); await saveMonth(k); if (cfg) await saveConfig(); toast('Deleted');
+  const o = sheetCtx.orig; closeSheet(); await removeTx(o);
 }
+
+/* swipe left on a transaction to delete it */
+const SW = { row: null, open: null, x0: 0, y0: 0, base: 0, dx: 0, mode: '' };
+const DEL_W = 88;
+function swipeSet(row, x, anim) {
+  const tx = row.querySelector('.tx'), del = row.querySelector('.swipe-del');
+  tx.style.transition = del.style.transition = anim ? 'transform .22s ease, width .22s ease' : 'none';
+  tx.style.transform = x ? `translateX(${x}px)` : '';
+  del.style.width = `${Math.max(0, -x)}px`;
+  del.tabIndex = x ? 0 : -1;
+}
+function swipeClose(row) { if (row) swipeSet(row, 0, true); if (SW.open === row) SW.open = null; }
+document.addEventListener('pointerdown', e => {
+  const row = e.target.closest('.swipe');
+  if (SW.open && SW.open !== row) swipeClose(SW.open);
+  if (!row || e.target.closest('.swipe-del')) return;
+  SW.row = row; SW.x0 = e.clientX; SW.y0 = e.clientY; SW.base = SW.open === row ? -DEL_W : 0; SW.dx = SW.base; SW.mode = '';
+});
+document.addEventListener('pointermove', e => {
+  const row = SW.row; if (!row) return;
+  const dx = e.clientX - SW.x0, dy = e.clientY - SW.y0;
+  if (!SW.mode) { if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) SW.mode = 'h'; else if (Math.abs(dy) > 8) { SW.mode = 'v'; SW.row = null; return; } else return; }
+  SW.dx = Math.min(0, Math.max(-row.offsetWidth, SW.base + dx));
+  swipeSet(row, SW.dx, false);
+});
+function swipeEnd() {
+  const row = SW.row; SW.row = null; if (!row || SW.mode !== 'h') return;
+  row.dataset.swiped = '1'; setTimeout(() => { delete row.dataset.swiped; }, 350);
+  if (SW.dx < -row.offsetWidth * 0.55) { swipeSet(row, -row.offsetWidth, true); const t = txOf(row.dataset.m).find(x => x.id === row.dataset.id); if (t) setTimeout(() => removeTx(t), 180); return; }
+  if (SW.dx < -DEL_W / 2) { swipeSet(row, -DEL_W, true); SW.open = row; } else swipeClose(row);
+}
+document.addEventListener('pointerup', swipeEnd);
+document.addEventListener('pointercancel', swipeEnd);
 
 /* recurring */
 function openRecurring(editId) {
@@ -887,11 +934,25 @@ function guessColumns(rows) {
   const debit = byName(/debit|withdraw|money out/), credit = byName(/credit|deposit|money in/);
   let amount = byName(/^amount|amount/);
   if (amount < 0) { const c = score.filter(s => s.i !== date && s.i !== desc && s.i !== debit && s.i !== credit && s.nums > 0 && !/balance/.test(h[s.i] || '')); amount = (c.sort((a, b) => b.neg - a.neg)[0] || {}).i ?? -1; }
-  return { header, date, desc, amount: (debit >= 0 && credit >= 0) ? -1 : amount, debit, credit, fmt: 'dmy', sign: 'neg-spend' };
+  const cat = byName(/categ/), kind = byName(/^(type|kind|in\/out)$/);
+  return { header, date, desc, amount: (debit >= 0 && credit >= 0) ? -1 : amount, debit, credit, cat, kind, fmt: 'dmy', sign: 'neg-spend' };
+}
+/* match a category name from a file to the app's list, ignoring case and spacing */
+function matchCat(name, type) {
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const n = norm(name); if (!n) return '';
+  const list = type === 'income' ? config.income : config.expense;
+  const hit = list.find(c => norm(c.name) === n) || list.find(c => n.length > 3 && (norm(c.name).startsWith(n) || n.startsWith(norm(c.name))));
+  return hit ? hit.name : '';
+}
+function fileCat(raw, type) {
+  const name = String(raw || '').replace(/\s+/g, ' ').trim(); if (!name) return { cat: '', isNew: false };
+  const m = matchCat(name, type); return m ? { cat: m, isNew: false } : { cat: name, isNew: true };
 }
 function importRows(ctx) {
-  const m = ctx.map, body = m.header ? ctx.rows.slice(1) : ctx.rows, out = [];
   const existing = new Set(Object.values(months).flat().map(t => `${t.date}|${(+t.amount).toFixed(2)}|${String(t.desc).toLowerCase()}`));
+  if (ctx.tracker) return ctx.tracker.map(t => ({ ...t, dup: existing.has(`${t.date}|${t.amount.toFixed(2)}|${t.desc.toLowerCase()}`) }));
+  const m = ctx.map, body = m.header ? ctx.rows.slice(1) : ctx.rows, out = [];
   for (const r of body) {
     const date = parseDateStr(r[m.date], m.fmt); if (!date) continue;
     let v;
@@ -899,20 +960,36 @@ function importRows(ctx) {
     else { const d = Math.abs(parseMoney(r[m.debit])) || 0, c = Math.abs(parseMoney(r[m.credit])) || 0; v = c - d; }
     if (!isFinite(v) || v === 0) continue;
     const desc = String(r[m.desc] || '').replace(/\s+/g, ' ').trim() || 'Bank transaction';
-    const type = v < 0 ? 'expense' : 'income', amount = round2(Math.abs(v));
-    const cat = suggestCat(desc, type) || 'Other';
+    let type = v < 0 ? 'expense' : 'income';
+    if (m.kind >= 0) { const k = String(r[m.kind] || '').toLowerCase(); if (/inc|credit|in\b/.test(k)) type = 'income'; else if (/exp|debit|out\b|spend/.test(k)) type = 'expense'; }
+    const amount = round2(Math.abs(v));
+    const fc = m.cat >= 0 ? fileCat(r[m.cat], type) : { cat: '', isNew: false };
+    const cat = fc.cat || suggestCat(desc, type) || 'Other';
     const dup = existing.has(`${date}|${amount.toFixed(2)}|${desc.toLowerCase()}`);
-    out.push({ id: uid() + out.length, date, amount, desc, cat, type, src: 'import', dup });
+    out.push({ id: uid() + out.length, date, amount, desc, cat, type, src: 'import', dup, fromFile: !!fc.cat, newCat: fc.isNew });
   }
   return out;
 }
 function openImport(ctx) {
   if (!ctx) {
-    openSheet(`${sheetHead('Import bank file')}
-    <div class="note">In your bank's website or app, export your transactions as a CSV file. Save it to Files, then choose it here. The app sorts each one into a category and skips ones you already have.</div>
-    <label class="scan" for="csvfile">${I.upload}<span>Choose CSV file</span><input id="csvfile" type="file" accept=".csv,text/csv,text/plain"></label>`, { kind: 'import' });
+    openSheet(`${sheetHead('Import transactions')}
+    <div class="note">Choose a bank export (CSV) or a spreadsheet (Excel or CSV). If the file has a Category column, the app uses it and learns each store. Otherwise it picks categories itself. It skips transactions you already have.</div>
+    <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
+    <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
     return;
   }
+  const newCats = (list => [...new Map(list.filter(t => t.newCat && !t.dup).map(t => [t.type + '|' + t.cat.toLowerCase(), t])).values()])(importRows(ctx));
+  if (ctx.tracker) {
+    const items = importRows(ctx), fresh = items.filter(t => !t.dup); ctx.items = items; ctx.newCats = newCats;
+    openSheet(`${sheetHead('Import spreadsheet')}
+    <div class="small">Found <strong class="num">${items.length}</strong> transactions in ${ctx.sheets} month tab${ctx.sheets === 1 ? '' : 's'}. <strong class="num">${fresh.length}</strong> are new.</div>
+    ${newCats.length ? `<div class="note">New categories to add: ${newCats.map(t => esc(t.cat)).join(', ')}.</div>` : ''}
+    <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} \u00b7 ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '\u2212'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found.</div>'}</div>
+    <div class="note">The app keeps each category from the spreadsheet and learns the store, so the same store gets that category next time.</div>
+    <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>`, ctx);
+    return;
+  }
+  ctx.newCats = newCats;
   const col = (id, label, val, allowNone) => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}" data-map="${id.slice(3)}">${allowNone ? `<option value="-1" ${val < 0 ? 'selected' : ''}>None</option>` : ''}${ctx.cols.map((c, i) => `<option value="${i}" ${i === val ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>`;
   const items = importRows(ctx), fresh = items.filter(t => !t.dup);
   ctx.items = items;
@@ -921,12 +998,80 @@ function openImport(ctx) {
   <div class="grid2">${col('mp-amount', 'Amount', ctx.map.amount, true)}<div class="field"><label for="mp-fmt">Date order</label><select class="input" id="mp-fmt" data-map="fmt"><option value="dmy" ${ctx.map.fmt === 'dmy' ? 'selected' : ''}>Day first</option><option value="mdy" ${ctx.map.fmt === 'mdy' ? 'selected' : ''}>Month first</option></select></div></div>
   ${ctx.map.amount >= 0 ? `<div class="field"><label for="mp-sign">Spending shows as</label><select class="input" id="mp-sign" data-map="sign"><option value="neg-spend" ${ctx.map.sign === 'neg-spend' ? 'selected' : ''}>Negative amounts</option><option value="pos-spend" ${ctx.map.sign === 'pos-spend' ? 'selected' : ''}>Positive amounts</option></select></div>`
     : `<div class="grid2">${col('mp-debit', 'Money out', ctx.map.debit, true)}${col('mp-credit', 'Money in', ctx.map.credit, true)}</div>`}
+  <div class="grid2">${col('mp-cat', 'Category', ctx.map.cat, true)}${col('mp-kind', 'Expense or income', ctx.map.kind, true)}</div>
+  ${newCats.length ? `<div class="note">New categories to add: ${newCats.map(t => esc(t.cat)).join(', ')}.</div>` : ''}
   <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app</span></div>
   <div class="preview">${fresh.slice(0, 8).map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions found. Check the columns above.</div>'}</div>
-  <div class="note">Items the app can't match go to Other. Fix them later and the app learns the store.</div>
+  <div class="note">${ctx.map.cat >= 0 ? 'Categories come from your file. Empty ones are picked by the app.' : 'Items the app can\u2019t match go to Other.'} Fix any later and the app learns the store.</div>
   <button type="button" class="btn primary block" data-act="importgo" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}</button>`, ctx);
 }
+const XLSX_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+function sheetRows(ws) {
+  const X = window.XLSX; if (!ws || !ws['!ref']) return [];
+  const rg = X.utils.decode_range(ws['!ref']), rows = [];
+  for (let r = rg.s.r; r <= rg.e.r; r++) {
+    const row = [];
+    for (let c = rg.s.c; c <= rg.e.c; c++) {
+      const cell = ws[X.utils.encode_cell({ r, c })]; let v = '';
+      if (cell) {
+        if (cell.t === 'n' && cell.z && X.SSF.is_date(cell.z)) { const d = X.SSF.parse_date_code(cell.v); v = d ? `${d.y}-${pad(d.m)}-${pad(d.d)}` : ''; }
+        else if (cell.t === 'd' && cell.v instanceof Date) v = isoDate(cell.v);
+        else v = cell.v == null ? '' : String(cell.v);
+      }
+      row.push(v);
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+function xlDate(v) {
+  const s = String(v || '').trim();
+  if (/^\d{5}(\.\d+)?$/.test(s) && window.XLSX) { const n = +s; if (n > 20000 && n < 80000) { const d = window.XLSX.SSF.parse_date_code(n); if (d) return `${d.y}-${pad(d.m)}-${pad(d.d)}`; } }
+  return parseDateStr(s, 'dmy');
+}
+/* The Finance Tracker layout: month tabs with Date, Amount, Description, Category blocks for Expenses and Income */
+function readTracker(wb) {
+  const out = []; let sheets = 0;
+  for (const name of wb.SheetNames) {
+    const rows = sheetRows(wb.Sheets[name]);
+    const hi = rows.findIndex(r => r.filter(c => /^date$/i.test(String(c).trim())).length && r.some(c => /^amount$/i.test(String(c).trim())));
+    if (hi < 0) continue;
+    const head = rows[hi].map(c => String(c).trim().toLowerCase());
+    const blocks = [];
+    head.forEach((c, i) => { if (c === 'date' && head[i+1] === 'amount') {
+      let type = blocks.length ? 'income' : 'expense';
+      for (let r = hi - 1; r >= Math.max(0, hi - 4); r--) { const t = String(rows[r][i] || '').toLowerCase(); if (/income/.test(t)) { type = 'income'; break; } if (/expense/.test(t)) { type = 'expense'; break; } }
+      blocks.push({ i, type, desc: head[i+2] && /desc/.test(head[i+2]) ? i + 2 : -1, cat: head.slice(i, i + 5).findIndex(x => /categ/.test(x)) });
+    } });
+    let found = 0;
+    for (const b of blocks) for (const r of rows.slice(hi + 1)) {
+      const date = xlDate(r[b.i]), amt = Math.abs(parseMoney(r[b.i + 1]));
+      if (!date || !(amt > 0)) continue;
+      const desc = (b.desc >= 0 ? String(r[b.desc] || '').trim() : '') || (b.type === 'income' ? 'Income' : 'Expense');
+      const fc = b.cat >= 0 ? fileCat(r[b.i + b.cat], b.type) : { cat: '', isNew: false };
+      out.push({ id: uid() + out.length, date, amount: round2(amt), desc, cat: fc.cat || suggestCat(desc, b.type) || 'Other', type: b.type, src: 'import', fromFile: !!fc.cat, newCat: fc.isNew });
+      found++;
+    }
+    if (found) sheets++;
+  }
+  return { items: out, sheets };
+}
 async function readCSV(file) {
+  if (/\.xlsx?$/i.test(file.name) || /spreadsheetml|ms-excel/.test(file.type)) {
+    try {
+      if (!window.XLSX) { toast('Opening spreadsheet\u2026'); await loadScript(XLSX_URL); }
+      const wb = window.XLSX.read(await file.arrayBuffer(), { type: 'array', cellNF: true });
+      const tr = readTracker(wb);
+      if (tr.items.length && wb.SheetNames.length > 1) { openImport({ kind: 'import', tracker: tr.items, sheets: tr.sheets }); return; }
+      const ws = wb.SheetNames.map(n => wb.Sheets[n]).find(w => sheetRows(w).filter(r => r.some(c => c !== '')).length > 1);
+      const rows = sheetRows(ws).filter(r => r.some(c => String(c).trim() !== ''));
+      if (rows.length < 1) { toast('That spreadsheet has no rows.'); return; }
+      const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
+      const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
+      openImport({ kind: 'import', rows, map, cols });
+    } catch { toast(navigator.onLine ? 'That spreadsheet could not be read.' : 'Opening a spreadsheet the first time needs internet.'); }
+    return;
+  }
   try {
     const text = await file.text(), rows = parseCSV(text);
     if (rows.length < 1) { toast('That file has no rows.'); return; }
@@ -937,8 +1082,14 @@ async function readCSV(file) {
 }
 async function runImport() {
   const fresh = sheetCtx.items.filter(t => !t.dup), touched = new Set();
-  for (const t of fresh) { const { dup, ...tx } = t; const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k); }
-  closeSheet(); render(); await saveMonths([...touched]); toast(`Imported ${fresh.length} transactions`);
+  let added = 0;
+  for (const t of fresh) {
+    if (t.newCat) { const list = t.type === 'income' ? config.income : config.expense; if (!matchCat(t.cat, t.type)) { list.push({ name: t.cat, planned: 0 }); added++; } }
+    if (t.fromFile) learn(t.desc, t.type, t.cat);
+    const { dup, fromFile, newCat, ...tx } = t; const k = tx.date.slice(0, 7); (months[k] = months[k] || []).push(tx); touched.add(k);
+  }
+  closeSheet(); render(); await saveMonths([...touched]); await saveConfig();
+  toast(`Imported ${fresh.length} transactions${added ? ` and ${added} new categor${added === 1 ? 'y' : 'ies'}` : ''}`);
 }
 
 /* backup */
@@ -986,7 +1137,12 @@ async function runRestore() {
 
 /* toast */
 let toastTimer;
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+let toastAction = null;
+function toast(msg, action) {
+  const t = $('toast'); toastAction = action || null;
+  t.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button" class="toastbtn" data-act="toastaction">${esc(action.label)}</button>` : ''}`;
+  t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; toastAction = null; }, action ? 5000 : 2600);
+}
 
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
@@ -1005,7 +1161,9 @@ document.addEventListener('click', async e => {
     case 'filter': ui.filter = el.dataset.f; render(); break;
     case 'add': if (mode !== 'wait') openTxSheet(); break;
     case 'close': closeSheet(); break;
-    case 'edit': { const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxSheet(t); break; }
+    case 'toastaction': { const a = toastAction; toastAction = null; $('toast').hidden = true; if (a) a.run(); break; }
+    case 'swipedel': { const row = el.closest('.swipe'); const t = row && txOf(row.dataset.m).find(x => x.id === row.dataset.id); SW.open = null; if (t) removeTx(t); break; }
+    case 'edit': { const sr = el.closest('.swipe'); if (sr && sr.dataset.swiped) break; if (sr && SW.open === sr) { swipeClose(sr); break; } const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxSheet(t); break; }
     case 'settype': {
       sheetCtx.type = el.dataset.t;
       el.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
