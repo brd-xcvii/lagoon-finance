@@ -330,7 +330,7 @@ async function initStore() {
   gotConfig = gotMonths = true;
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch {}
   afterLoad();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') { try { navigator.serviceWorker.register('sw.js'); } catch {} }
+  if ('serviceWorker' in navigator && location.protocol === 'https:') { try { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}); navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window.__lfReloaded) { window.__lfReloaded = true; location.reload(); } }); } catch {} }
 }
 function afterLoad() {
   if (!(gotConfig && gotMonths)) return;
