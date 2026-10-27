@@ -852,6 +852,21 @@ async function deleteRecurring(btn) {
   await saveConfig(); openRecurring(); render(); toast('Stopped. Past entries stay in your history.');
 }
 
+/* goals file: columns Goal, Target, Saved (optional), Due (YYYY-MM, optional) */
+function openGoalImport(rows) {
+  const h = rows[0].map(c => String(c).trim().toLowerCase()), col = n => h.indexOf(n);
+  const have = new Set(config.goals.map(g => g.name.toLowerCase()));
+  const goals = rows.slice(1).map(r => ({ name: String(r[col('goal')] || '').trim(), target: round2(Math.abs(parseMoney(r[col('target')])) || 0),
+    saved: col('saved') >= 0 ? round2(Math.abs(parseMoney(r[col('saved')])) || 0) : 0,
+    due: col('due') >= 0 && /^\d{4}-\d{2}/.test(String(r[col('due')]).trim()) ? String(r[col('due')]).trim().slice(0, 7) : '' }))
+    .filter(g => g.name && g.target > 0);
+  const fresh = goals.filter(g => !have.has(g.name.toLowerCase()));
+  openSheet(`${sheetHead('Add goals')}
+  <div class="small">Found <strong class="num">${goals.length}</strong> goal${goals.length === 1 ? '' : 's'}. <strong class="num">${fresh.length}</strong> are new.</div>
+  <div class="preview">${fresh.map(g => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(g.name)}</div><div class="tiny muted">${g.due ? 'By ' + esc(monthName(g.due).name.slice(0, 3) + ' ' + monthName(g.due).year) : 'No date'}</div></span><span class="amt num">${money0(g.target)}</span></div>`).join('') || '<div class="note" style="padding:12px">You already have these goals.</div>'}</div>
+  <button type="button" class="btn primary block" data-act="goalimportgo" ${fresh.length ? '' : 'disabled'}>Add ${fresh.length} goal${fresh.length === 1 ? '' : 's'}</button>`, { kind: 'goalimport', goals: fresh });
+}
+
 /* goals */
 function openGoal(id) {
   const g = id ? config.goals.find(x => x.id === id) : null;
@@ -989,6 +1004,7 @@ function openImport(ctx) {
   if (!ctx) {
     openSheet(`${sheetHead('Import transactions')}
     <div class="note">Choose a bank export (CSV) or a spreadsheet (Excel or CSV). If the file has a Category column, the app uses it and learns each store. Otherwise it picks categories itself. It skips transactions you already have.</div>
+    <div class="note">A goals file works too: columns Goal, Target, Saved and Due (year-month).</div>
     <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
     <button type="button" class="link" style="align-self:flex-start" data-act="imports">See or delete earlier imports</button>
     <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
@@ -1093,6 +1109,8 @@ async function readCSV(file) {
   try {
     const text = await file.text(), rows = parseCSV(text);
     if (rows.length < 1) { toast('That file has no rows.'); return; }
+    const gh = rows[0].map(c => String(c).trim().toLowerCase());
+    if (gh.includes('goal') && gh.includes('target')) { openGoalImport(rows); return; }
     const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
     const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
     openImport({ kind: 'import', rows, map, cols });
@@ -1251,6 +1269,7 @@ document.addEventListener('click', async e => {
     case 'recdel': deleteRecurring(el); break;
     case 'goaledit': openGoal(el.dataset.id); break;
     case 'goalsave': saveGoal(); break;
+    case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
     case 'goaldel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.goals = config.goals.filter(g => g.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Goal deleted'); break;
     case 'goaladd': openGoalAdd(el.dataset.id); break;
     case 'goaladdsave': { const v = parseMoney($('ga-amount').value); if (!isFinite(v) || !v) { toast('Enter an amount.'); break; } const g = config.goals.find(x => x.id === sheetCtx.id); g.saved = round2(Math.max(0, g.saved + v)); closeSheet(); render(); await saveConfig(); toast(g.saved >= g.target ? 'Goal reached' : 'Added to goal'); break; }
