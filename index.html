@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#071A24">
 <script>
 (function(){try{
-  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6',concrete:'#D9DDDF'};
+  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6',concrete:'#D9DDDF',fizz:'#0F0F11'};
   var s=localStorage.getItem('lf-skin'); if(!SK[s]) s='lagoon';
   var q=new URLSearchParams(location.search).get('icon'); var ic=SK[q]?q:s;
   if(s!=='lagoon') document.documentElement.setAttribute('data-skin',s);
@@ -25,7 +25,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>
-/* Layout: one phone column, glass cards over a coloured backdrop, floating glass tab bar. Four colour themes. */
+/* Layout: one phone column, glass cards over a coloured backdrop, floating glass tab bar. Six colour themes. */
 :root{
   color-scheme: dark;
   --bg:#071A24; --bg-2:#0B2430;
@@ -40,6 +40,8 @@
   --track:rgba(255,255,255,.12); --field:rgba(0,0,0,.22); --field-line:rgba(255,255,255,.17);
   --grab:rgba(255,255,255,.25); --scan-line:rgba(94,234,212,.5); --shadow:rgba(0,0,0,.22);
   --b1:#0F7C78; --b2:#1E4FA8; --b3:#0E6B5C; --picker:invert(.8);
+  /* good news (income, money saved, bars on track) uses the accent unless a theme sets it apart */
+  --good:var(--accent); --good-soft:var(--accent-soft);
   --font:'Manrope', -apple-system, 'SF Pro Text', system-ui, sans-serif;
   --r-lg:28px; --r-md:18px; --r-sm:12px;
 }
@@ -65,6 +67,14 @@
   --warn:#FFD166; --warn-soft:rgba(255,209,102,.16); --over:#FF8FA3; --over-soft:rgba(255,143,163,.16);
   --sheet:#2A1730; --sheet-bg:rgba(42,23,48,.9); --toast:rgba(42,23,48,.94); --nav:rgba(40,20,48,.6); --scrim:rgba(10,4,12,.55);
   --scan-line:rgba(255,158,122,.5); --b1:#B8476A; --b2:#6B2E8F; --b3:#E0784A;
+}
+:root[data-skin="fizz"]{
+  --bg:#0F0F11; --bg-2:#1A1A1D; --fg:#F6F3F1; --muted:#C9C1BE; --faint:#8A8380;
+  --accent:#F0202E; --accent-ink:#FFFFFF; --accent-soft:rgba(240,32,46,.18);
+  --warn:#FFC94D; --warn-soft:rgba(255,201,77,.16); --over:#FF5A66; --over-soft:rgba(255,90,102,.16);
+  --good:#9CC3FF; --good-soft:rgba(156,195,255,.16);
+  --sheet:#1A1A1D; --sheet-bg:rgba(26,26,29,.9); --toast:rgba(26,26,29,.94); --nav:rgba(24,24,27,.66); --scrim:rgba(4,4,5,.6);
+  --scan-line:rgba(240,32,46,.55); --b1:#C8101E; --b2:#1D3A8F; --b3:#4A0A12;
 }
 :root[data-skin="gold"]{
   --bg:#0E0E16; --bg-2:#1A1A26; --fg:#F4F1E8; --muted:#BDB7CC; --faint:#807A92;
@@ -113,7 +123,7 @@ button{cursor:pointer}
 .muted{color:var(--muted)} .small{font-size:13px} .tiny{font-size:12px}
 .big{font-size:40px;font-weight:800;letter-spacing:-.025em;line-height:1.05}
 .mid{font-size:22px;font-weight:800}
-.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:6px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:6px 10px;border-radius:999px;background:var(--good-soft);color:var(--good);white-space:nowrap}
 .chip.warn{background:var(--warn-soft);color:var(--warn)} .chip.over{background:var(--over-soft);color:var(--over)}
 .iconbtn{width:44px;height:44px;flex:none;border-radius:22px;border:1px solid var(--line);background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:center}
 .link{background:none;border:0;color:var(--accent);font-weight:700;font-size:14px;padding:8px 0;min-height:36px}
@@ -123,7 +133,7 @@ button{cursor:pointer}
 .btn.block{width:100%}
 .btn:disabled{opacity:.5}
 .bar{height:8px;border-radius:4px;background:var(--track);overflow:hidden}
-.bar>i{display:block;height:100%;border-radius:4px;background:var(--accent)}
+.bar>i{display:block;height:100%;border-radius:4px;background:var(--good)}
 .bar>i.warn{background:var(--warn)} .bar>i.over{background:var(--over)}
 .list{display:flex;flex-direction:column}
 .tx{display:flex;align-items:center;gap:12px;padding:10px 4px;background:none;border:0;border-bottom:1px solid var(--divider);text-align:left;width:100%;min-width:0}
@@ -138,7 +148,7 @@ button{cursor:pointer}
 .tx .t{flex:1;min-width:0}
 .tx .t div:first-child{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .amt{font-weight:700;white-space:nowrap}
-.amt.in{color:var(--accent)}
+.amt.in{color:var(--good)}
 .daylabel{font-size:12px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:12px 4px 2px}
 .empty{padding:22px 8px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:12px;align-items:center}
 .seg{display:flex;padding:4px;border-radius:var(--r-md);background:var(--field);border:1px solid var(--line);gap:4px}
@@ -166,7 +176,7 @@ tr.total td{font-weight:800;border-bottom:0}
 .chart .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
 .chart .pair{display:flex;align-items:flex-end;gap:2px;height:96px}
 .chart .pair i{display:block;width:7px;border-radius:4px 4px 2px 2px;min-height:2px}
-.chart .pair i.inc{background:var(--accent)} .chart .pair i.exp{background:var(--warn)}
+.chart .pair i.inc{background:var(--good)} .chart .pair i.exp{background:var(--warn)}
 .legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .legend b{width:8px;height:8px;border-radius:2px;display:inline-block}
@@ -502,7 +512,7 @@ function openTxDetail(t) {
   const cat6 = Array.from({ length: 6 }, (_, i) => addMonths(cur, i - 6)), catAvg = round2(cat6.reduce((a, k) => a + catActual(k, t.type, t.cat), 0) / 6);
   const maxV = Math.max(1, ...last12keys.map(k => byM[k] || 0));
   openSheet(`${sheetHead(store)}
-  <div class="row between"><div style="min-width:0"><div style="font-weight:700;overflow-wrap:anywhere">${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${t.pending ? ' · Pending' : ''}</div></div><div class="mid num" style="white-space:nowrap;color:${t.type === 'income' ? 'var(--accent)' : 'var(--fg)'}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</div></div>
+  <div class="row between"><div style="min-width:0"><div style="font-weight:700;overflow-wrap:anywhere">${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${t.pending ? ' · Pending' : ''}</div></div><div class="mid num" style="white-space:nowrap;color:${t.type === 'income' ? 'var(--good)' : 'var(--fg)'}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</div></div>
   <div class="grid2">
     <div class="glass card" style="gap:2px;padding:12px;"><div class="tiny muted" style="font-weight:700">Average a month</div><div class="mid num">${money0(total / spanMonths)}</div><div class="tiny muted">over ${spanMonths} month${spanMonths === 1 ? '' : 's'}</div></div>
     <div class="glass card" style="gap:2px;padding:12px;"><div class="tiny muted" style="font-weight:700">All time</div><div class="mid num">${money0(total)}</div><div class="tiny muted">${all.length} time${all.length === 1 ? '' : 's'} · ${money0(total / Math.max(1, all.length))} each</div></div>
@@ -656,7 +666,7 @@ function viewYear() {
     <button type="button" class="iconbtn" data-act="year" data-d="-1" aria-label="Previous year">${I.left}</button>
     <h1 class="h1 num">${y}</h1>
     <button type="button" class="iconbtn" data-act="year" data-d="1" aria-label="Next year">${I.right}</button></div>
-  <section class="glass card"><div class="row between"><div class="h2">Income and expenses</div><div class="legend"><span><b style="background:var(--accent)"></b>Income</span><span><b style="background:var(--warn)"></b>Expenses</span></div></div>
+  <section class="glass card"><div class="row between"><div class="h2">Income and expenses</div><div class="legend"><span><b style="background:var(--good)"></b>Income</span><span><b style="background:var(--warn)"></b>Expenses</span></div></div>
     <div class="chart" role="img" aria-label="Monthly income and expenses for ${y}">${data.map((d, i) => `<div class="col"><div class="pair"><i class="inc" style="height:${Math.round(d.inc / maxV * 96)}px"></i><i class="exp" style="height:${Math.round(d.exp / maxV * 96)}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[i]}</span></div>`).join('')}</div></section>
   <section class="glass card"><div class="h2">Summary</div><div class="tablebox"><table>
     <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>Balance</th></tr></thead>
@@ -695,7 +705,8 @@ const SKINS = [
   { id: 'ember', name: 'Plum Ember', bg: '#1A0F1F', b1: '#B8476A', b2: '#6B2E8F', accent: '#FF9E7A' },
   { id: 'gold', name: 'Midnight Gold', bg: '#0E0E16', b1: '#3B2F6B', b2: '#8A6A1F', accent: '#F5C451' },
   { id: 'sage', name: 'Sage Light', bg: '#EEF0E6', b1: '#A8C3A0', b2: '#E9C79B', accent: '#2F5D46' },
-  { id: 'concrete', name: 'Concrete', bg: '#D9DDDF', b1: '#8E9FAC', b2: '#3F474F', accent: '#D6452A' }
+  { id: 'concrete', name: 'Concrete', bg: '#D9DDDF', b1: '#8E9FAC', b2: '#3F474F', accent: '#D6452A' },
+  { id: 'fizz', name: 'Red Fizz', bg: '#0F0F11', b1: '#C8101E', b2: '#1D3A8F', accent: '#F0202E' }
 ];
 const iconFile = id => id === 'lagoon' ? 'icon-180.png' : `icon-${id}-180.png`;
 const currentSkin = () => document.documentElement.getAttribute('data-skin') || 'lagoon';
@@ -905,7 +916,7 @@ function viewForecast() {
   <div class="seg" role="group" aria-label="How far ahead">${seg(14, '2 weeks', days, 'fcdays')}${seg(28, '4 weeks', days, 'fcdays')}${seg(56, '8 weeks', days, 'fcdays')}</div>
   <div class="seg" role="group" aria-label="Commission">${seg('none', 'No commission', comm, 'fccomm')}${seg('low', `Low ${money0(cs.low)}`, comm, 'fccomm')}${seg('avg', `Average ${money0(cs.avg)}`, comm, 'fccomm')}</div>
   <div class="note" style="padding:0 4px">Commission you’ve entered is always included. These options only fill months you haven’t entered yet, on the first payday. Low is your smallest commission in the last ${cs.n} months. <button type="button" class="link" data-act="paysettings">Enter commission</button></div>
-  <section class="glass card" style="padding:8px 14px">${Object.entries(days2).map(([d, es]) => `<div class="daylabel">${esc(prettyDay(d))}</div>${es.map(e => `<div class="row between small" style="gap:8px;padding:4px 0"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name)}</span><span class="num" style="color:${e.v > 0 ? 'var(--accent)' : 'var(--muted)'}">${e.v > 0 ? '+' : '−'}${money(Math.abs(e.v))}</span><span class="num" style="width:84px;text-align:right;font-weight:700;color:${e.bal < 0 ? 'var(--over)' : 'var(--fg)'}">${e.bal < 0 ? '−' : ''}${money0(Math.abs(e.bal))}</span></div>`).join('')}`).join('') || '<div class="note" style="padding:8px 0">No bills or pay in this window.</div>'}</section>`;
+  <section class="glass card" style="padding:8px 14px">${Object.entries(days2).map(([d, es]) => `<div class="daylabel">${esc(prettyDay(d))}</div>${es.map(e => `<div class="row between small" style="gap:8px;padding:4px 0"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name)}</span><span class="num" style="color:${e.v > 0 ? 'var(--good)' : 'var(--muted)'}">${e.v > 0 ? '+' : '−'}${money(Math.abs(e.v))}</span><span class="num" style="width:84px;text-align:right;font-weight:700;color:${e.bal < 0 ? 'var(--over)' : 'var(--fg)'}">${e.bal < 0 ? '−' : ''}${money0(Math.abs(e.bal))}</span></div>`).join('')}`).join('') || '<div class="note" style="padding:8px 0">No bills or pay in this window.</div>'}</section>`;
 }
 function openArrange() {
   const row = (kind, id, label, i, n, shown) => `<div class="row between" style="gap:8px;min-height:44px">
@@ -1068,13 +1079,13 @@ function viewDebts() {
     <div class="big num">${stuck.length ? 'Not yet' : freeIso ? esc(new Date(freeIso + 'T00:00:00').toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })) : '—'}</div>
     ${stuck.length ? `<div class="note" style="color:var(--over)">${stuck.map(r => esc(r.name)).join(', ')} ${stuck.length === 1 ? 'has' : 'have'} no end date. Set a repayment that beats the interest.</div>` : ''}
     ${extraAll > 0 ? `<span class="chip num" style="align-self:flex-start">Extra paid ${money0(extraAll)}</span>` : ''}
-    <div style="display:flex;flex-direction:column;gap:6px">${dated.map(r => `<div class="row between small"><span>${esc(r.name)}</span><span class="muted num">${esc(r.payoff)}${r.sooner > 0 ? ` <span style="color:var(--accent)">(${r.sooner} wk sooner)</span>` : ''}</span></div>`).join('')}</div>
+    <div style="display:flex;flex-direction:column;gap:6px">${dated.map(r => `<div class="row between small"><span>${esc(r.name)}</span><span class="muted num">${esc(r.payoff)}${r.sooner > 0 ? ` <span style="color:var(--good)">(${r.sooner} wk sooner)</span>` : ''}</span></div>`).join('')}</div>
     <div class="tiny muted">Dates count interest only where you set a rate.</div></section>` : '';
   return `${freeCard}<section class="glass card" aria-label="Net worth">
     <div class="small muted" style="font-weight:600">Net worth: your money minus your debts</div>
     <div class="big num" style="color:${nw != null && nw < 0 ? 'var(--over)' : 'var(--fg)'}">${nw == null ? '—' : (nw < 0 ? '−' : '') + money(Math.abs(nw))}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip num">Debts ${money0(total)}</span><span class="chip num">Repayments ${money0(weekly)} a week</span>${change != null ? `<span class="chip ${change < 0 ? 'over' : ''} num">${change >= 0 ? '+' : '−'}${money0(Math.abs(change))} in 12 months</span>` : ''}</div>
-    ${vals.length > 1 ? `<div class="chart" role="img" aria-label="Net worth at the end of each month">${hist.map((v, i) => `<div class="col"><div class="pair"><i style="width:14px;background:${v != null && v < 0 ? 'var(--over)' : 'var(--accent)'};height:${v == null ? 0 : Math.max(2, Math.round(Math.abs(v) / maxAbs * 96))}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+ends[i].slice(5, 7) - 1]}</span></div>`).join('')}</div>
+    ${vals.length > 1 ? `<div class="chart" role="img" aria-label="Net worth at the end of each month">${hist.map((v, i) => `<div class="col"><div class="pair"><i style="width:14px;background:${v != null && v < 0 ? 'var(--over)' : 'var(--good)'};height:${v == null ? 0 : Math.max(2, Math.round(Math.abs(v) / maxAbs * 96))}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+ends[i].slice(5, 7) - 1]}</span></div>`).join('')}</div>
     <div class="tiny muted">Bar height shows size. Red bars are below zero. Past balances come from your repayments, so past interest is not included.</div>` : ''}
   </section>
   ${rows.length ? rows.sort((a, b) => b.bal - a.bal).map(r => `<section class="glass card" style="gap:8px">
@@ -1396,7 +1407,7 @@ function viewSavings() {
     <div class="seg" role="group" aria-label="Months to cover">${[3, 6, 12, 18, 24].map(m => `<button type="button" data-act="safemonths" data-v="${m}" aria-pressed="${st.months === m}">${m} mo</button>`).join('')}</div>
     <div class="row between"><div><div class="mid num">${money0(st.net)}</div><div class="tiny muted num">of ${money0(st.target)} for ${st.months} months</div></div><div class="chip num" style="align-self:center">Covers ${st.covers.toFixed(1)} months</div></div>
     ${bar(st.net, st.target)}
-    <div style="display:flex;flex-direction:column;gap:4px">${[3, 6, 12, 18, 24].map(m => { const t = st.e.monthly * m, done = st.net >= t; return `<div class="row between small"><span style="color:${done ? 'var(--accent)' : 'var(--muted)'}">${done ? '✓' : '○'} ${m} months</span><span class="num muted">${money0(t)}${done ? '' : ` · ${money0(t - st.net)} to go`}</span></div>`; }).join('')}</div>
+    <div style="display:flex;flex-direction:column;gap:4px">${[3, 6, 12, 18, 24].map(m => { const t = st.e.monthly * m, done = st.net >= t; return `<div class="row between small"><span style="color:${done ? 'var(--good)' : 'var(--muted)'}">${done ? '✓' : '○'} ${m} months</span><span class="num muted">${money0(t)}${done ? '' : ` · ${money0(t - st.net)} to go`}</span></div>`; }).join('')}</div>
     <button type="button" class="btn primary block" data-act="potmoney" data-id="safety">Set amount saved</button>
   </section>
   <div class="row between" style="padding:0 4px"><div class="h2">Saving for</div><button type="button" class="link" data-act="potedit">Add</button></div>
@@ -1472,7 +1483,7 @@ function viewTrends() {
   const stores = (key) => { const g = {}; for (const t of monthTx(key, 'expense')) { if (t.cat === 'Debt') continue; const s = storeName(t.desc); (g[s] = g[s] || { total: 0, n: 0 }); g[s].total += +t.amount || 0; g[s].n++; } return g; };
   const sNow = stores(k), sLast = stores(prev);
   const top = Object.entries(sNow).map(([s, v]) => ({ s, total: round2(v.total), n: v.n, last: round2((sLast[s] || {}).total || 0) })).sort((a, b) => b.total - a.total).slice(0, 12);
-  const arrow = d => d > 0.5 ? `<span class="num" style="color:var(--warn)">↑ ${money0(d)}</span>` : d < -0.5 ? `<span class="num" style="color:var(--accent)">↓ ${money0(-d)}</span>` : '<span class="muted">same</span>';
+  const arrow = d => d > 0.5 ? `<span class="num" style="color:var(--warn)">↑ ${money0(d)}</span>` : d < -0.5 ? `<span class="num" style="color:var(--good)">↓ ${money0(-d)}</span>` : '<span class="muted">same</span>';
   // pay split
   const pi = payInfo(), keys = Array.from({ length: 12 }, (_, i) => addMonths(k, i - 11));
   const split = keys.map(m => { let base = 0, comm = 0; for (const t of txOf(m)) if (t.type === 'income' && t.cat === 'Paycheck') { const a = +t.amount || 0; if (pi.base && a > pi.base * 1.5) { base += pi.base; comm += a - pi.base; } else base += a; } return { m, base: round2(base), comm: round2(comm) }; });
