@@ -300,27 +300,37 @@ function suggestCat(desc, type) {
 function learn(desc, type, cat) { const key = normKey(desc); if (!key || !cat) return false; const k = (type === 'income' ? 'i:' : 'e:') + key; if (config.rules[k] === cat) return false; config.rules[k] = cat; return true; }
 
 /* ---------- recurring ---------- */
+const FREQS = [['weekly','Weekly'],['fortnightly','Fortnightly'],['4weekly','Every 4 weeks'],['monthly','Monthly'],['quarterly','Every 3 months'],['yearly','Yearly']];
+const freqLabel = f => (FREQS.find(x => x[0] === f) || FREQS[3])[1];
+// Older items stored a day of the month and a first month; read them as monthly from that date.
+const recStart = r => r.startDate || `${r.start || mk(today())}-${pad(Math.min(+r.day || 1, daysIn(r.start || mk(today()))))}`;
+const recFreq = r => r.freq || 'monthly';
+function occurrence(r, n) {
+  const [sy, sm, sd] = recStart(r).split('-').map(Number), f = recFreq(r);
+  const days = { weekly: 7, fortnightly: 14, '4weekly': 28 }[f];
+  if (days) return isoDate(new Date(sy, sm - 1, sd + n * days));
+  const k = addMonths(`${sy}-${pad(sm)}`, n * ({ quarterly: 3, yearly: 12 }[f] || 1));
+  return `${k}-${pad(Math.min(sd, daysIn(k)))}`;
+}
+function recSkipped(r, iso) { const s = r.skip || []; return s.includes(iso) || (recFreq(r) === 'monthly' && s.includes(iso.slice(0, 7))); }
+function recAdded(r, iso) { const ids = [`rec-${r.id}-${iso}`, `rec-${r.id}-${iso.slice(0, 7)}`]; return txOf(iso.slice(0, 7)).some(t => ids[0] === t.id || (recFreq(r) === 'monthly' && ids[1] === t.id)); }
+function nextOccurrence(r, afterIso) { for (let n = 0; n < 2000; n++) { const d = occurrence(r, n); if (d > afterIso && !recSkipped(r, d)) return d; } return null; }
 async function applyRecurring() {
-  const cur = mk(today()), dayNow = today().getDate(), touched = new Set();
+  const now = isoDate(today()), touched = new Set();
   for (const r of config.recurring) {
-    let k = r.start || cur, guard = 0;
-    while (k <= cur && guard++ < 120) {
-      const day = Math.min(+r.day || 1, daysIn(k));
-      const id = `rec-${r.id}-${k}`;
-      if ((k < cur || dayNow >= day) && !(r.skip || []).includes(k) && !txOf(k).some(t => t.id === id)) {
-        (months[k] = months[k] || []).push({ id, date: `${k}-${pad(day)}`, amount: +r.amount, desc: r.name, cat: r.cat, type: r.type, src: 'recurring' });
-        touched.add(k);
-      }
-      k = addMonths(k, 1);
+    for (let n = 0; n < 2000; n++) {
+      const d = occurrence(r, n); if (d > now) break;
+      if (recSkipped(r, d) || recAdded(r, d)) continue;
+      const k = d.slice(0, 7);
+      (months[k] = months[k] || []).push({ id: `rec-${r.id}-${d}`, date: d, amount: +r.amount, desc: r.name, cat: r.cat, type: r.type, src: 'recurring' });
+      touched.add(k);
     }
   }
-  if (touched.size) { await saveMonths([...touched]); toast(`Added ${touched.size > 1 ? 'recurring bills for ' + touched.size + ' months' : 'this month’s due recurring bills'}`); render(); }
+  if (touched.size) { await saveMonths([...touched]); toast('Added the recurring items that were due'); render(); }
 }
 function dueSoon() {
-  const cur = mk(today()), dayNow = today().getDate();
-  return config.recurring.map(r => ({ r, day: Math.min(+r.day || 1, daysIn(cur)) }))
-    .filter(({ r, day }) => (r.start || cur) <= cur && day > dayNow && !(r.skip || []).includes(cur) && !txOf(cur).some(t => t.id === `rec-${r.id}-${cur}`))
-    .sort((a, b) => a.day - b.day);
+  const now = isoDate(today()), limit = isoDate(new Date(today().getFullYear(), today().getMonth(), today().getDate() + 14));
+  return config.recurring.map(r => ({ r, date: nextOccurrence(r, now) })).filter(x => x.date && x.date <= limit).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /* ---------- render ---------- */
@@ -387,7 +397,7 @@ function viewHome() {
     ${rows.length ? rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money0(r.actual)} / ${r.planned ? money0(r.planned) : 'no plan'}</span></div>${statusBar(r)}</div>`).join('')
       : `<div class="note">Set a monthly plan for each category in Plan. Your spending fills these bars as you add transactions.</div>`}
   </section>
-  ${due.length ? `<section class="glass card" aria-label="Bills due soon"><div class="row between"><div class="h2">Due soon</div><button type="button" class="link" data-act="recurring">Manage</button></div>${due.map(({ r, day }) => `<div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="muted num">${money(r.amount)} · ${MONTHS[+k.slice(5)-1].slice(0,3)} ${day}</span></div>`).join('')}</section>` : ''}
+  ${due.length ? `<section class="glass card" aria-label="Bills due soon"><div class="row between"><div class="h2">Due soon</div><button type="button" class="link" data-act="recurring">Manage</button></div>${due.map(({ r, date }) => `<div class="row between small"><span style="font-weight:600">${esc(r.name)}</span><span class="muted num">${money(r.amount)} · ${esc(prettyDay(date))}</span></div>`).join('')}</section>` : ''}
   ${config.goals.length ? `<section class="glass card" aria-label="Savings goals"><div class="row between"><div class="h2">Goals</div><button type="button" class="link" data-act="plantab" data-p="goals">View</button></div>${config.goals.slice(0,2).map(g => { const p = g.target > 0 ? Math.min(1, g.saved / g.target) : 0; return `<div style="display:flex;flex-direction:column;gap:6px"><div class="row between small"><span style="font-weight:600">${esc(g.name)}</span><span class="muted num">${money0(g.saved)} / ${money0(g.target)}</span></div><div class="bar"><i style="width:${Math.round(p*100)}%"></i></div></div>`; }).join('')}</section>` : ''}
   <section aria-label="Recent transactions" style="display:flex;flex-direction:column;gap:4px">
     <div class="row between" style="padding:0 4px"><div class="h2">Recent</div>${tx.length ? '<button type="button" class="link" data-act="tab" data-tab="activity">See all</button>' : ''}</div>
@@ -620,35 +630,45 @@ async function deleteTx(btn) {
   const o = sheetCtx.orig, k = o.date.slice(0, 7);
   months[k] = txOf(k).filter(t => t.id !== o.id);
   let cfg = false;
-  if (o.src === 'recurring') { const m = /^rec-(.+)-(\d{4}-\d{2})$/.exec(o.id); const r = m && config.recurring.find(x => x.id === m[1]); if (r) { r.skip = [...new Set([...(r.skip || []), m[2]])]; cfg = true; } }
+  if (o.src === 'recurring') { const m = /^rec-(.+?)-(\d{4}-\d{2}(?:-\d{2})?)$/.exec(o.id); const r = m && config.recurring.find(x => x.id === m[1]); if (r) { r.skip = [...new Set([...(r.skip || []), m[2]])]; cfg = true; } }
   closeSheet(); render(); await saveMonth(k); if (cfg) await saveConfig(); toast('Deleted');
 }
 
 /* recurring */
 function openRecurring(editId) {
   const r = editId ? config.recurring.find(x => x.id === editId) : null;
-  const t = r || { name: '', amount: '', type: 'expense', cat: '', day: 1, start: mk(today()) };
+  const t = r ? { ...r, startDate: recStart(r), freq: recFreq(r) } : { name: '', amount: '', type: 'expense', cat: '', startDate: isoDate(today()), freq: 'monthly' };
+  const now = isoDate(today());
   openSheet(`${sheetHead('Recurring bills')}
-  ${config.recurring.length ? `<div class="list">${config.recurring.map(x => `<button type="button" class="tx" data-act="recedit" data-id="${esc(x.id)}"><span class="avatar" aria-hidden="true">${I.repeat}</span><span class="t"><div>${esc(x.name)}</div><div class="tiny muted">${esc(x.cat)} · day ${esc(x.day)} each month</div></span><span class="amt num ${x.type === 'income' ? 'in' : ''}">${money(x.amount)}</span></button>`).join('')}</div>` : `<div class="note">Add rent, bills, subscriptions or pay. The app adds each one on its day every month.</div>`}
+  ${config.recurring.length ? `<div class="list">${config.recurring.map(x => { const nx = nextOccurrence(x, now); return `<button type="button" class="tx" data-act="recedit" data-id="${esc(x.id)}"><span class="avatar" aria-hidden="true">${I.repeat}</span><span class="t"><div>${esc(x.name)}</div><div class="tiny muted">${esc(freqLabel(recFreq(x)))} · ${esc(x.cat)}${nx ? ' · next ' + esc(prettyDay(nx)) : ''}</div></span><span class="amt num ${x.type === 'income' ? 'in' : ''}">${money(x.amount)}</span></button>`; }).join('')}</div>` : `<div class="note">Add rent, bills, subscriptions or pay. Pick the first date and how often it repeats. The app adds each one when it falls due.</div>`}
   <div class="h2">${r ? 'Edit ' + esc(r.name) : 'Add a recurring item'}</div>
   <div class="seg" role="group" aria-label="Type"><button type="button" data-act="settype" data-t="expense" aria-pressed="${t.type === 'expense'}">Expense</button><button type="button" data-act="settype" data-t="income" aria-pressed="${t.type === 'income'}">Income</button></div>
   <div class="field"><label for="r-name">Name</label><input class="input" id="r-name" value="${esc(t.name)}" placeholder="Rent, Netflix, Pay"></div>
   <div class="grid2"><div class="field"><label for="r-amount">Amount</label><input class="input num" id="r-amount" inputmode="decimal" value="${esc(t.amount)}" placeholder="$0.00"></div>
-  <div class="field"><label for="r-day">Day of month</label><input class="input num" id="r-day" inputmode="numeric" value="${esc(t.day)}"></div></div>
-  <div class="grid2"><div class="field"><label for="f-cat">Category</label><select class="input" id="f-cat">${catOptions(t.type, t.cat)}</select></div>
-  <div class="field"><label for="r-start">First month</label><input class="input" id="r-start" type="month" value="${esc(t.start)}"></div></div>
+  <div class="field"><label for="f-cat">Category</label><select class="input" id="f-cat">${catOptions(t.type, t.cat)}</select></div></div>
+  <div class="grid2"><div class="field"><label for="r-start">First date</label><input class="input" id="r-start" type="date" value="${esc(t.startDate)}"></div>
+  <div class="field"><label for="r-freq">Repeats</label><select class="input" id="r-freq">${FREQS.map(([v, l]) => `<option value="${v}" ${v === t.freq ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+  <div class="note" id="r-preview"></div>
   <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
   <button type="button" class="btn primary block" data-act="recsave">${r ? 'Save changes' : 'Add recurring item'}</button>
   ${r ? `<button type="button" class="btn danger block" data-act="recdel">Stop this recurring item</button>` : ''}`,
   { kind: 'rec', id: r ? r.id : null, type: t.type, catTouched: true });
+  recPreview();
+}
+function recPreview() {
+  const el = $('r-preview'), s = $('r-start') && $('r-start').value; if (!el) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) { el.textContent = ''; return; }
+  const tmp = { startDate: s, freq: $('r-freq').value };
+  const dates = [0, 1, 2].map(n => occurrence(tmp, n)).map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }));
+  el.textContent = `Dates: ${dates.join(', ')} and so on.`;
 }
 async function saveRecurring() {
-  const name = $('r-name').value.trim(), amount = Math.abs(parseMoney($('r-amount').value)), day = parseInt($('r-day').value, 10), cat = $('f-cat').value, start = $('r-start').value || mk(today());
-  const problem = !name ? 'Enter a name.' : !(amount > 0) ? 'Enter an amount above $0.' : !(day >= 1 && day <= 31) ? 'Enter a day from 1 to 31.' : !cat ? 'Choose a category.' : '';
+  const name = $('r-name').value.trim(), amount = Math.abs(parseMoney($('r-amount').value)), cat = $('f-cat').value, startDate = $('r-start').value, freq = $('r-freq').value;
+  const problem = !name ? 'Enter a name.' : !(amount > 0) ? 'Enter an amount above $0.' : !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ? 'Pick the first date.' : !cat ? 'Choose a category.' : '';
   if (problem) { const e = $('formErr'); e.hidden = false; e.textContent = problem; return; }
   const ctx = sheetCtx;
-  if (ctx.id) Object.assign(config.recurring.find(x => x.id === ctx.id), { name, amount: round2(amount), day, cat, start, type: ctx.type });
-  else config.recurring.push({ id: uid(), name, amount: round2(amount), day, cat, start, type: ctx.type, skip: [] });
+  if (ctx.id) { const x = config.recurring.find(y => y.id === ctx.id); Object.assign(x, { name, amount: round2(amount), cat, startDate, freq, type: ctx.type }); delete x.day; delete x.start; }
+  else config.recurring.push({ id: uid(), name, amount: round2(amount), cat, startDate, freq, type: ctx.type, skip: [] });
   await saveConfig(); await applyRecurring(); openRecurring(); render(); toast('Recurring item saved');
 }
 async function deleteRecurring(btn) {
@@ -898,6 +918,7 @@ document.addEventListener('change', async e => {
   const el = e.target;
   if (el.id === 'f-cat' && sheetCtx) { sheetCtx.catTouched = !!el.value; const h = $('catHint'); if (h) h.hidden = true; }
   else if (el.id === 'f-receipt' && el.files && el.files[0]) { scanReceipt(el.files[0]); el.value = ''; }
+  else if (el.id === 'r-start' || el.id === 'r-freq') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
   else if (el.id === 'restorefile' && el.files && el.files[0]) readBackup(el.files[0]);
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
