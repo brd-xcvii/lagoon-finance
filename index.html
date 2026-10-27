@@ -938,6 +938,28 @@ async function deleteRecurring(btn) {
   await saveConfig(); openRecurring(); render(); toast('Stopped. Past entries stay in your history.');
 }
 
+/* budget file: columns Category, Monthly budget, Type (Expense or Income, optional). No Date column. */
+function isBudgetFile(rows) {
+  const h = (rows[0] || []).map(c => String(c).trim().toLowerCase());
+  return h.includes('category') && h.some(c => /budget|planned|plan\b/.test(c)) && !h.some(c => /date/.test(c));
+}
+function openBudgetImport(rows) {
+  const h = rows[0].map(c => String(c).trim().toLowerCase()), ci = h.indexOf('category'), ai = h.findIndex(c => /budget|planned|plan\b/.test(c)), ti = h.findIndex(c => /^type$/.test(c));
+  const items = rows.slice(1).map(r => {
+    const raw = String(r[ci] || '').replace(/\s+/g, ' ').trim(), v = parseMoney(r[ai]);
+    const type = ti >= 0 && /inc/i.test(String(r[ti])) ? 'income' : 'expense';
+    const name = matchCat(raw, type) || raw;
+    const list = type === 'income' ? config.income : config.expense, cur = list.find(c => c.name === name);
+    return { name, type, planned: isFinite(v) ? round2(Math.abs(v)) : null, isNew: !cur, was: cur ? (+cur.planned || 0) : 0 };
+  }).filter(x => x.name && x.planned != null);
+  const total = t => round2(items.filter(x => x.type === t).reduce((a, x) => a + x.planned, 0));
+  openSheet(`${sheetHead('Set monthly budgets')}
+  <div class="small">Found <strong class="num">${items.length}</strong> categor${items.length === 1 ? 'y' : 'ies'}. Spending plan <strong class="num">${money0(total('expense'))}</strong> a month${total('income') ? `, income plan <strong class="num">${money0(total('income'))}</strong>` : ''}.</div>
+  <div class="preview">${items.map(x => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(x.name)}${x.isNew ? ' <span class="tiny muted">(new)</span>' : ''}</div><div class="tiny muted">${x.type === 'income' ? 'Income' : 'Expense'} · was ${money0(x.was)}</div></span><span class="amt num">${money0(x.planned)}</span></div>`).join('') || '<div class="note" style="padding:12px">No budgets found. Use the columns Category and Monthly budget.</div>'}</div>
+  <div class="note">This replaces the monthly plan for each category listed. Other categories keep their plan.</div>
+  <button type="button" class="btn primary block" data-act="budgetimportgo" ${items.length ? '' : 'disabled'}>Set ${items.length} budget${items.length === 1 ? '' : 's'}</button>`, { kind: 'budgetimport', items });
+}
+
 /* goals file: columns Goal, Target, Saved (optional), Due (YYYY-MM, optional) */
 function openGoalImport(rows) {
   const h = rows[0].map(c => String(c).trim().toLowerCase()), col = n => h.indexOf(n);
@@ -1103,6 +1125,7 @@ function openImport(ctx) {
     openSheet(`${sheetHead('Import transactions')}
     <div class="note">Choose a bank export (CSV) or a spreadsheet (Excel or CSV). If the file has a Category column, the app uses it and learns each store. Otherwise it picks categories itself. It skips transactions you already have.</div>
     <div class="note">A goals file works too: columns Goal, Target, Saved and Due (year-month).</div>
+    <div class="note">So does a budget file: columns Category, Monthly budget and Type.</div>
     <div class="note">Your Finance Tracker spreadsheet works too. The app reads every month tab, both Expenses and Income.</div>
     <button type="button" class="link" style="align-self:flex-start" data-act="imports">See or delete earlier imports</button>
     <label class="scan" for="csvfile">${I.upload}<span>Choose a file</span><input id="csvfile" type="file" accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`, { kind: 'import' });
@@ -1198,6 +1221,7 @@ async function readCSV(file) {
       const ws = wb.SheetNames.map(n => wb.Sheets[n]).find(w => sheetRows(w).filter(r => r.some(c => c !== '')).length > 1);
       const rows = sheetRows(ws).filter(r => r.some(c => String(c).trim() !== ''));
       if (rows.length < 1) { toast('That spreadsheet has no rows.'); return; }
+      if (isBudgetFile(rows)) { openBudgetImport(rows); return; }
       const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
       const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
       openImport({ kind: 'import', rows, map, cols });
@@ -1209,6 +1233,7 @@ async function readCSV(file) {
     if (rows.length < 1) { toast('That file has no rows.'); return; }
     const gh = rows[0].map(c => String(c).trim().toLowerCase());
     if (gh.includes('goal') && gh.includes('target')) { openGoalImport(rows); return; }
+    if (isBudgetFile(rows)) { openBudgetImport(rows); return; }
     const map = guessColumns(rows), n = Math.max(...rows.map(r => r.length));
     const cols = Array.from({ length: n }, (_, i) => map.header ? (rows[0][i] || `Column ${i+1}`) : `Column ${i+1} (${String((rows[0][i] || '')).slice(0, 18)})`);
     openImport({ kind: 'import', rows, map, cols });
@@ -1367,6 +1392,7 @@ document.addEventListener('click', async e => {
     case 'recdel': deleteRecurring(el); break;
     case 'goaledit': openGoal(el.dataset.id); break;
     case 'goalsave': saveGoal(); break;
+    case 'budgetimportgo': { const it = sheetCtx.items || []; for (const x of it) { const list = x.type === 'income' ? config.income : config.expense, c = list.find(k => k.name === x.name); if (c) c.planned = x.planned; else list.push({ name: x.name, planned: x.planned }); } closeSheet(); ui.tab = 'plan'; ui.planTab = 'budget'; render(); await saveConfig(); toast(`Set ${it.length} budgets`); break; }
     case 'goalimportgo': { const gs = sheetCtx.goals || []; for (const g of gs) config.goals.push({ id: uid(), ...g }); closeSheet(); ui.tab = 'plan'; ui.planTab = 'goals'; render(); await saveConfig(); toast(`Added ${gs.length} goal${gs.length === 1 ? '' : 's'}`); break; }
     case 'goaldel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; } config.goals = config.goals.filter(g => g.id !== sheetCtx.id); closeSheet(); render(); await saveConfig(); toast('Goal deleted'); break;
     case 'goaladd': openGoalAdd(el.dataset.id); break;
