@@ -319,7 +319,7 @@ let months = {};                 // 'YYYY-MM' -> [tx]
 let mode = 'wait';               // 'wait' | 'db' | 'local'
 let ocrWorker = null;
 let gotConfig = false, gotMonths = false, recurringDone = false;
-const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all' };
+const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all', actCat: '', actDate: 'period', actFrom: '', actTo: '', actShow: 150, catView: null, searchTimer: 0 };
 
 /* ---------- persistence ---------- */
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -600,24 +600,90 @@ function viewHome() {
   <button type="button" class="link" style="align-self:center;padding:8px" data-act="arrange">Arrange Home</button>`;
 }
 
-function viewActivity() {
-  const q = ui.search.trim().toLowerCase();
+/* Activity: search, type, category and date filters. Typing only redraws the results, not the whole page. */
+const ACT_DATES = [['period', 'Month or week shown'], ['30', 'Last 30 days'], ['90', 'Last 3 months'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Pick dates']];
+const ACT_PAGE = 150;
+function actFiltered() {
+  const q = ui.search.trim().toLowerCase(), mode = ui.actDate || 'period', now = isoDate(today());
   let list;
-  if (q) list = Object.values(months).flat().filter(t => (t.desc + ' ' + t.cat).toLowerCase().includes(q) || String(t.amount).includes(q));
-  else list = txRange(curPeriod());
+  if (mode === 'period' && !q) list = txRange(curPeriod());
+  else if (mode === '30' || mode === '90') list = txRange({ from: addDaysIso(now, mode === '30' ? -29 : -89), to: now });
+  else if (mode === 'year') list = txRange({ from: `${now.slice(0, 4)}-01-01`, to: `${now.slice(0, 4)}-12-31` });
+  else if (mode === 'custom') { const f = ui.actFrom || '0000-01-01', t = ui.actTo || '9999-12-31'; list = allTx().filter(x => x.date >= f && x.date <= t); }
+  else list = allTx();
+  if (q) { const qn = q.replace(/[$,]/g, ''); list = list.filter(t => (t.desc + ' ' + t.cat).toLowerCase().includes(q) || (qn && String(t.amount).includes(qn))); }
   if (ui.filter !== 'all') list = list.filter(t => t.type === ui.filter);
-  list.sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+  if (ui.actCat) { const [ty, ...rest] = ui.actCat.split('|'), name = rest.join('|'); list = list.filter(t => t.type === ty && t.cat === name); }
+  return list.sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+}
+function actHead() {
+  const q = ui.search.trim(), mode = ui.actDate || 'period';
+  if (mode === 'period' && !q) return periodBar();
+  const label = q ? 'Search results' : (ACT_DATES.find(d => d[0] === mode) || ACT_DATES[0])[1];
+  return `<h1 class="h1">${esc(label)}</h1>${q && mode === 'period' ? '<div class="tiny muted" style="margin-top:-8px">Searching all dates</div>' : ''}`;
+}
+function actResults() {
+  const list = actFiltered(), shown = list.slice(0, ui.actShow || ACT_PAGE), q = ui.search.trim();
   const groups = []; let last = null;
-  for (const t of list) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length-1].items.push(t); }
+  for (const t of shown) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length - 1].items.push(t); }
   const sum = list.reduce((a, t) => a + (t.type === 'income' ? +t.amount : -t.amount), 0);
-  return `${loadingNote()}${q ? `<h1 class="h1">Search results</h1>` : periodBar()}
-  <div class="field"><label for="search">Search all transactions</label><input class="input" id="search" type="search" placeholder="Store, category or amount" value="${esc(ui.search)}" autocomplete="off"></div>
+  const filtered = q || ui.actCat || ui.filter !== 'all' || (ui.actDate && ui.actDate !== 'period');
+  return `<div class="row between small muted" style="padding:0 4px"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span><span class="num">Net ${sum < 0 ? '−' : '+'}${money(Math.abs(sum))}</span></div>
+  ${groups.length ? `<section class="glass card" style="padding:4px 14px 8px">${groups.map(g => `<div class="daylabel">${esc(prettyDay(g.day))}</div><div class="list">${g.items.map(txRow).join('')}</div>`).join('')}</section>
+    ${list.length > shown.length ? `<button type="button" class="btn block" data-act="actmore">Show ${Math.min(ACT_PAGE, list.length - shown.length)} more of ${list.length - shown.length}</button>` : ''}`
+    : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">${filtered ? 'No matches' : 'Nothing here yet'}</div><div class="small">${filtered ? 'Try a shorter search or clear the filters.' : 'Tap + to add a transaction or scan a receipt.'}</div></div>`}`;
+}
+function refreshActivity() {
+  const h = $('actHead'), r = $('actResults'); if (!h || !r) { render(); return; }
+  h.innerHTML = actHead(); r.innerHTML = actResults();
+}
+function viewActivity() {
+  const mode = ui.actDate || 'period';
+  const catOpt = type => (type === 'income' ? config.income : config.expense).map(c => { const v = `${type}|${c.name}`; return `<option value="${esc(v)}" ${ui.actCat === v ? 'selected' : ''}>${esc(c.name)}</option>`; }).join('');
+  const active = ui.actCat || ui.filter !== 'all' || mode !== 'period' || ui.search.trim();
+  return `${loadingNote()}<div id="actHead" style="display:flex;flex-direction:column;gap:14px">${actHead()}</div>
+  <div class="field"><label for="search">Search all transactions</label><input class="input" id="search" type="search" placeholder="Store, category or amount" value="${esc(ui.search)}" autocomplete="off" autocorrect="off" spellcheck="false"></div>
   <div class="seg" role="group" aria-label="Filter">
     ${['all','expense','income'].map(f => `<button type="button" data-act="filter" data-f="${f}" aria-pressed="${ui.filter === f}">${f === 'all' ? 'All' : f === 'expense' ? 'Expenses' : 'Income'}</button>`).join('')}
   </div>
-  <div class="row between small muted" style="padding:0 4px"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span><span class="num">Net ${sum < 0 ? '−' : '+'}${money(Math.abs(sum))}</span></div>
-  ${groups.length ? `<section class="glass card" style="padding:4px 14px 8px">${groups.map(g => `<div class="daylabel">${esc(prettyDay(g.day))}</div><div class="list">${g.items.map(txRow).join('')}</div>`).join('')}</section>`
-    : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">${q ? 'No matches' : 'Nothing here yet'}</div><div class="small">${q ? 'Try a shorter search.' : 'Tap + to add a transaction or scan a receipt.'}</div></div>`}`;
+  <div class="grid2">
+    <div class="field"><label for="act-cat">Category</label><select class="input" id="act-cat"><option value="">All categories</option>${ui.filter !== 'income' ? `<optgroup label="Expenses">${catOpt('expense')}</optgroup>` : ''}${ui.filter !== 'expense' ? `<optgroup label="Income">${catOpt('income')}</optgroup>` : ''}</select></div>
+    <div class="field"><label for="act-date">Dates</label><select class="input" id="act-date">${ACT_DATES.map(([v, l]) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${v === 'period' ? (ui.period === 'week' ? 'Week shown' : 'Month shown') : l}</option>`).join('')}</select></div>
+  </div>
+  ${mode === 'custom' ? `<div class="grid2"><div class="field"><label for="act-from">From</label><input class="input" type="date" id="act-from" value="${esc(ui.actFrom || '')}"></div><div class="field"><label for="act-to">To</label><input class="input" type="date" id="act-to" value="${esc(ui.actTo || '')}"></div></div>` : ''}
+  ${active ? '<button type="button" class="link" style="align-self:flex-start" data-act="actclear">Clear search and filters</button>' : ''}
+  <div id="actResults" style="display:flex;flex-direction:column;gap:14px">${actResults()}</div>`;
+}
+
+/* one category: every transaction in it for the month or week, its plan, past months and top stores */
+function viewCategory() {
+  const c = ui.catView || { type: 'expense', name: '' }, p = curPeriod(), wk = p.kind === 'week';
+  const r = catRows(p, c.type).find(x => x.name === c.name) || { name: c.name, planned: 0, actual: 0, pct: 0, diff: 0, status: 'none' };
+  const tx = txRange(p).filter(t => t.type === c.type && t.cat === c.name).sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+  const keys = Array.from({ length: 6 }, (_, i) => addMonths(ui.month, i - 5)), vals = keys.map(k => catActual(k, c.type, c.name));
+  const planM = +((c.type === 'income' ? config.income : config.expense).find(x => x.name === c.name) || {}).planned || 0;
+  const maxV = Math.max(1, planM, ...vals), avg6 = vals.reduce((a, b) => a + b, 0) / 6;
+  const by = {}; for (const t of tx) { const n = storeName(t.desc); by[n] = by[n] || { n, v: 0, c: 0 }; by[n].v += +t.amount || 0; by[n].c++; }
+  const stores = Object.values(by).sort((a, b) => b.v - a.v).slice(0, 6);
+  const groups = []; let last = null;
+  for (const t of tx) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length - 1].items.push(t); }
+  const col = r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)';
+  return `<div class="row between"><button type="button" class="iconbtn" data-act="catback" aria-label="Back to Plan">${I.left}</button><h1 class="h1" style="text-align:center;min-width:0;overflow-wrap:anywhere">${esc(c.name)}</h1><button type="button" class="link" data-act="catactivity">Search</button></div>
+  ${periodBar()}
+  <section class="glass card" aria-label="${esc(c.name)} total">
+    <div class="small muted" style="font-weight:600">${c.type === 'income' ? 'Received' : 'Spent'} this ${wk ? 'week' : 'month'}</div>
+    <div class="big num">${money(r.actual)}</div>
+    ${r.planned ? `<div class="small num" style="color:${col};font-weight:700">${r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over'} of your ${money0(r.planned)} plan</div>${c.type === 'expense' ? statusBar(r) : ''}` : '<div class="small muted">No plan set for this category.</div>'}
+    <div class="row" style="flex-wrap:wrap"><span class="chip num">${tx.length} transaction${tx.length === 1 ? '' : 's'}</span>${tx.length ? `<span class="chip num">${money(r.actual / tx.length)} each on average</span>` : ''}</div>
+  </section>
+  <section class="glass card" aria-label="Last 6 months">
+    <div class="row between"><div class="h2">Last 6 months</div><span class="small muted num">${money0(avg6)} a month on average</span></div>
+    <div class="chart" role="img" aria-label="${esc(c.name)} each month for 6 months">${keys.map((k, i) => `<div class="col"><span class="tiny muted num">${vals[i] ? money0(vals[i]) : ''}</span><div class="pair" style="height:80px"><i style="width:22px;height:${Math.round(vals[i] / maxV * 80)}px;background:${k === ui.month ? 'var(--accent)' : 'var(--track)'}"></i></div><span class="tiny muted" style="font-weight:700">${MONTHS[+k.slice(5) - 1].slice(0, 3)}</span></div>`).join('')}</div>
+    ${planM ? `<div class="tiny muted num">Monthly plan ${money0(planM)}. Months over plan: ${vals.filter(v => v > planM).length} of 6.</div>` : ''}
+  </section>
+  ${stores.length > 1 ? `<section class="glass card" aria-label="Top stores"><div class="h2">Where it went</div>${stores.map(x => `<div class="row between small"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.n)} <span class="muted">${x.c}×</span></span><span class="num" style="font-weight:700">${money(x.v)}</span></div>`).join('')}</section>` : ''}
+  ${groups.length ? `<section class="glass card" style="padding:4px 14px 8px" aria-label="Transactions">${groups.map(g => `<div class="daylabel">${esc(prettyDay(g.day))}</div><div class="list">${g.items.map(txRow).join('')}</div>`).join('')}</section>`
+    : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">Nothing in ${esc(c.name)}</div><div class="small">No transactions this ${wk ? 'week' : 'month'}. Use the arrows to look at other ${wk ? 'weeks' : 'months'}.</div></div>`}`;
 }
 
 function viewPlan() {
@@ -633,12 +699,12 @@ function viewPlan() {
     const real = rows.filter(r => !(type === 'income' && r.name === BORROW_CAT)), tp = real.reduce((a, r) => a + r.planned, 0), ta = real.reduce((a, r) => a + r.actual, 0);
     return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
       ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
-        <div class="row between"><div style="min-width:0"><div style="font-weight:600">${esc(r.name)}</div><div class="tiny num" style="color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</div></div>
+        <div class="row between"><button type="button" data-act="catview" data-type="${type}" data-name="${esc(r.name)}" aria-label="Open ${esc(r.name)}" style="min-width:0;flex:1;display:flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;text-align:left;color:inherit;font:inherit;cursor:pointer"><span style="min-width:0"><span style="display:block;font-weight:600">${esc(r.name)}</span><span class="tiny num" style="display:block;color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</span></span><span class="muted" style="flex:none;display:flex">${I.chev}</span></button>
         ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0">` : '<span class="tiny muted">Not in list</span>'}</div>
         ${type === 'expense' ? statusBar(r) : ''}</div>`).join('')}</section>`;
   };
   const note = wk ? 'Weekly plans are your monthly plans spread over the year. Change one and the other updates.' : 'Plans repeat every month.';
-  return `${tabs}${periodBar()}<div class="note" style="padding:0 4px">${note} Bars turn orange at 80% and red when you go over.</div>${block('expense','Expenses')}${block('income','Income')}`;
+  return `${tabs}${periodBar()}<div class="note" style="padding:0 4px">${note} Bars turn orange at 80% and red when you go over. Tap a category to see its transactions.</div>${block('expense','Expenses')}${block('income','Income')}`;
 }
 
 function viewGoals() {
@@ -1508,8 +1574,9 @@ function render() {
   const v = $('view');
   const active = document.activeElement && document.activeElement.id;
   const selStart = active && document.activeElement.selectionStart;
-  v.innerHTML = ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome();
-  document.querySelectorAll('nav.tabs [data-tab]').forEach(b => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
+  v.innerHTML = ui.tab === 'category' ? viewCategory() : ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome();
+  const navTab = ui.tab === 'category' ? 'plan' : ui.tab;
+  document.querySelectorAll('nav.tabs [data-tab]').forEach(b => { if (b.dataset.tab === navTab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
   if (active && $(active) && v.contains($(active))) { const el = $(active); el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch {} }
 }
 
@@ -2312,7 +2379,12 @@ document.addEventListener('click', async e => {
       ui.period = v; storeSet('lf-period', v); render(); break; }
     case 'year': ui.year += +el.dataset.d; render(); break;
     case 'plantab': ui.tab = 'plan'; ui.planTab = el.dataset.p; render(); break;
-    case 'filter': ui.filter = el.dataset.f; render(); break;
+    case 'filter': ui.filter = el.dataset.f; if (ui.actCat && !ui.actCat.startsWith(ui.filter + '|') && ui.filter !== 'all') ui.actCat = ''; ui.actShow = ACT_PAGE; render(); break;
+    case 'actmore': ui.actShow = (ui.actShow || ACT_PAGE) + ACT_PAGE; refreshActivity(); break;
+    case 'actclear': ui.search = ''; ui.filter = 'all'; ui.actCat = ''; ui.actDate = 'period'; ui.actFrom = ui.actTo = ''; ui.actShow = ACT_PAGE; render(); break;
+    case 'catview': ui.catView = { type: el.dataset.type, name: el.dataset.name }; ui.tab = 'category'; render(); window.scrollTo(0, 0); break;
+    case 'catback': ui.tab = 'plan'; render(); window.scrollTo(0, 0); break;
+    case 'catactivity': { const c = ui.catView || {}; ui.tab = 'activity'; storeSet('lf-tab', 'activity'); ui.search = ''; ui.filter = c.type || 'all'; ui.actCat = `${c.type}|${c.name}`; ui.actDate = 'period'; ui.actShow = ACT_PAGE; render(); window.scrollTo(0, 0); break; }
     case 'add': if (mode !== 'wait') openTxSheet(); break;
     case 'close': closeSheet(); break;
     case 'toastaction': { const a = toastAction; toastAction = null; $('toast').hidden = true; if (a) a.run(); break; }
@@ -2407,7 +2479,7 @@ function autoCat(desc) {
 }
 document.addEventListener('input', e => {
   const id = e.target.id;
-  if (id === 'search') { ui.search = e.target.value; render(); }
+  if (id === 'search') { ui.search = e.target.value; ui.actShow = ACT_PAGE; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(refreshActivity, 180); }
   else if (id === 'f-desc' && sheetCtx && sheetCtx.kind === 'tx') autoCat(e.target.value);
   else if (id === 'f-amount' && sheetCtx && sheetCtx.items) renderSplit();
   else if (id === 'x-amount' && sheetCtx && sheetCtx.kind === 'extra') extraPreview();
@@ -2417,6 +2489,9 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.id === 'act-cat') { ui.actCat = el.value; ui.actShow = ACT_PAGE; render(); return; }
+  if (el.id === 'act-date') { ui.actDate = el.value; ui.actShow = ACT_PAGE; render(); return; }
+  if (el.id === 'act-from' || el.id === 'act-to') { ui[el.id === 'act-from' ? 'actFrom' : 'actTo'] = el.value; ui.actShow = ACT_PAGE; refreshActivity(); return; }
   if (el.id === 'f-cat' && sheetCtx) { sheetCtx.catTouched = !!el.value; const h = $('catHint'); if (h) h.hidden = true; if (sheetCtx.items) renderSplit(); }
   else if (el.id === 'split-on' && sheetCtx) sheetCtx.splitOn = el.checked;
   else if (el.dataset.item && sheetCtx && sheetCtx.items) { const i = sheetCtx.items[+el.dataset.item]; i.cat = el.value; i.touched = true; sheetCtx.itemsOpen = true; renderSplit(); }
