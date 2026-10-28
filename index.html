@@ -56,6 +56,7 @@
   --divider:rgba(33,39,44,.09); --track:rgba(33,39,44,.12); --field:rgba(255,255,255,.7); --field-line:rgba(33,39,44,.16);
   --grab:rgba(33,39,44,.22); --scan-line:rgba(214,69,42,.45); --shadow:rgba(30,38,44,.14);
   --b1:#8E9FAC; --b2:#3F474F; --b3:#BAC3C9; --picker:none;
+  --good:#2B6E8F; --good-soft:rgba(43,110,143,.12);
 }
 :root[data-skin="concrete"] nav.tabs{--nav:rgba(242,244,245,.86);--line:rgba(33,39,44,.08)}
 :root[data-skin="concrete"] nav.tabs button:not(.add):not([aria-current="page"]){color:#3F474F}
@@ -149,6 +150,18 @@ button{cursor:pointer}
 .tx .t div:first-child{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .amt{font-weight:700;white-space:nowrap}
 .amt.in{color:var(--good)}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.cal .wd{font-size:11px;font-weight:700;color:var(--faint);text-align:center;padding-bottom:2px}
+.cal button{min-height:58px;border-radius:var(--r-sm);border:1px solid transparent;background:var(--field);display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 0 4px;font:inherit;color:var(--fg);min-width:0;cursor:pointer}
+.cal button.out{visibility:hidden}
+.cal button.past{opacity:.55}
+.cal button.today{border-color:var(--accent)}
+.cal button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.cal button.neg .dn{color:var(--over)}
+.cal .dn{font-size:13px;font-weight:700}
+.cal .amt{font-size:10px;font-weight:700;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%}
+.cal .dots{display:flex;gap:3px;height:6px}
+.cal .dots i{width:6px;height:6px;border-radius:3px;background:var(--warn)} .cal .dots i.pay{background:var(--good)}
 .daylabel{font-size:12px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:12px 4px 2px}
 .empty{padding:22px 8px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:12px;align-items:center}
 .seg{display:flex;padding:4px;border-radius:var(--r-md);background:var(--field);border:1px solid var(--line);gap:4px}
@@ -319,7 +332,7 @@ let months = {};                 // 'YYYY-MM' -> [tx]
 let mode = 'wait';               // 'wait' | 'db' | 'local'
 let ocrWorker = null;
 let gotConfig = false, gotMonths = false, recurringDone = false;
-const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all', actCat: '', actDate: 'period', actFrom: '', actTo: '', actShow: 150, catView: null, searchTimer: 0 };
+const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all', actCat: '', actDate: 'period', actFrom: '', actTo: '', actShow: 150, catView: null, searchTimer: 0, calMonth: '', calDay: '', cpIdx: 0, cpWhat: '', cpTimer: 0 };
 
 /* ---------- persistence ---------- */
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -549,7 +562,7 @@ function periodBar() {
     <button type="button" class="iconbtn" data-act="month" data-d="1" aria-label="Next ${wk ? 'week' : 'month'}">${I.right}</button></div>`;
 }
 const HOME_SECTIONS = [['safe', 'Safe to spend'], ['accounts', 'Accounts'], ['savings', 'Savings'], ['month', 'Month or week balance'], ['alerts', 'Budget alerts'], ['weekly', 'This week'], ['totals', 'Income and expenses'], ['planned', 'Planned vs actual'], ['due', 'Due soon'], ['goals', 'Goals'], ['recent', 'Recent']];
-const PLAN_TABS = [['budget', 'Budget'], ['savings', 'Savings'], ['goals', 'Goals'], ['debts', 'Debts'], ['trends', 'Trends'], ['year', 'Year']];
+const PLAN_TABS = [['budget', 'Budget'], ['calendar', 'Bills'], ['commission', 'Commission'], ['savings', 'Savings'], ['goals', 'Goals'], ['debts', 'Debts'], ['borrow', 'Borrowing'], ['trends', 'Trends'], ['year', 'Year']];
 function ordered(list, saved) { const ids = list.map(x => x[0]), o = (Array.isArray(saved) ? saved : []).filter(id => ids.includes(id)); return [...o, ...ids.filter(id => !o.includes(id))].map(id => list.find(x => x[0] === id)); }
 function viewHome() {
   const p = curPeriod(), wk = p.kind === 'week', word = wk ? 'week' : 'month';
@@ -693,6 +706,9 @@ function viewPlan() {
   if (ui.planTab === 'savings') return `${tabs}${viewSavings()}`;
   if (ui.planTab === 'trends') return `${tabs}${viewTrends()}`;
   if (ui.planTab === 'year') return `${tabs}${viewYear()}`;
+  if (ui.planTab === 'calendar') return `${tabs}${viewCalendar()}`;
+  if (ui.planTab === 'borrow') return `${tabs}${viewBorrowing()}`;
+  if (ui.planTab === 'commission') return `${tabs}${viewCommission()}`;
   const p = curPeriod(), wk = p.kind === 'week';
   const block = (type, title) => {
     const rows = catRows(p, type);
@@ -1539,6 +1555,184 @@ function storeName(desc) {
   return w ? w.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : 'Other';
 }
 function monthTx(k, type) { return txOf(k).filter(t => t.type === type); }
+/* ---------- shared: paydays and bills on any date ---------- */
+const kMoney = v => { const a = Math.abs(v); return (v < 0 ? '−' : '') + (a >= 1000 ? '$' + (a / 1000).toFixed(a >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(a)); };
+/* bills from your recurring list that fall between two dates, paid or not */
+function scheduledBills(from, to) {
+  const out = [], now = isoDate(today());
+  for (const r of config.recurring) {
+    if ((r.type || 'expense') !== 'expense') continue;
+    for (let n = 0; n < 3000; n++) { const d = occurrence(r, n); if (d > to) break; if (d >= from && !recSkipped(r, d)) out.push({ date: d, name: r.name, cat: r.cat, v: +r.amount || 0, done: recAdded(r, d) || d < now }); }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || b.v - a.v);
+}
+/* paydays between two dates: real paychecks in the past, base pay or entered commission ahead */
+function scheduledPays(from, to) {
+  const pi = payInfo(), now = isoDate(today()), out = [], step = pi.freq === 'fortnightly' ? 14 : 7;
+  for (const t of allTx()) if (t.type === 'income' && t.cat === 'Paycheck' && t.date >= from && t.date <= to && t.date <= now) out.push({ date: t.date, name: t.amount > pi.base * 1.5 ? 'Pay with commission' : 'Pay', v: +t.amount || 0, done: true });
+  if (!pi.base) return out.sort((a, b) => a.date.localeCompare(b.date));
+  const comm = commissionRows().rows, cs = commissionStats(), seen = new Set();
+  for (let d = nextPayday(pi); d <= to; d = addDaysIso(d, step)) {
+    if (d < from) continue;
+    const c = comm.find(x => x.payDate === d && x.actual == null);
+    if (c) { out.push({ date: d, name: `Pay with ${monthName(c.month).name} commission`, v: c.expect, comm: true }); seen.add(d.slice(0, 7)); continue; }
+    if (+d.slice(8) <= 7 && !seen.has(d.slice(0, 7)) && cs.low > 0) { seen.add(d.slice(0, 7)); out.push({ date: d, name: 'Pay with commission (lowest estimate)', v: round2(pi.base + cs.low), comm: true, est: true }); continue; }
+    out.push({ date: d, name: 'Base pay', v: pi.base });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/* ---------- Bills: a calendar of bills, repayments and paydays ---------- */
+function viewCalendar() {
+  const m = ui.calMonth || mk(today()), now = isoDate(today()), from = `${m}-01`, to = `${m}-${pad(daysIn(m))}`;
+  const bills = scheduledBills(from, to), pays = scheduledPays(from, to);
+  const f = forecast({ days: Math.max(14, dayDiff(now, to) + 1) }), balAt = {};
+  if (f) { let b = f.cash.v; balAt[now] = b; for (const e of f.ev) { b = e.bal; balAt[e.date] = Math.min(balAt[e.date] ?? Infinity, b); } }
+  const sel = ui.calDay && ui.calDay.slice(0, 7) === m ? ui.calDay : (now.slice(0, 7) === m ? now : from);
+  const lead = (new Date(from + 'T00:00:00').getDay() + 6) % 7, cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<button type="button" class="out" tabindex="-1" aria-hidden="true"></button>');
+  let lowBal = null;
+  for (let d = 1; d <= daysIn(m); d++) {
+    const iso = `${m}-${pad(d)}`, db = bills.filter(x => x.date === iso), dp = pays.filter(x => x.date === iso), bt = db.reduce((a, x) => a + x.v, 0);
+    let bal = null; if (f && iso >= now && iso <= f.end) { bal = Object.keys(balAt).filter(k => k <= iso).sort().pop(); bal = bal ? balAt[bal] : null; }
+    if (bal != null && (lowBal == null || bal < lowBal.v)) lowBal = { v: bal, date: iso };
+    cells.push(`<button type="button" data-act="calday" data-d="${iso}" aria-pressed="${iso === sel}" class="${iso === now ? 'today ' : ''}${iso < now ? 'past ' : ''}${bal != null && bal < 0 ? 'neg' : ''}" aria-label="${esc(shortDay(iso))}: ${db.length} bills${dp.length ? ', payday' : ''}"><span class="dn">${d}</span><span class="dots">${dp.length ? '<i class="pay"></i>' : ''}${db.length ? '<i></i>' : ''}</span><span class="amt num">${bt ? kMoney(bt) : ''}</span></button>`);
+  }
+  // weeks: Monday to Sunday, bills against pay
+  const weeks = []; for (let w = weekStartOf(from); w <= to; w = addDaysIso(w, 7)) {
+    const we = addDaysIso(w, 6), b = scheduledBills(w, we).reduce((a, x) => a + x.v, 0), pIn = scheduledPays(w, we).reduce((a, x) => a + x.v, 0);
+    weeks.push({ w, we, b: round2(b), p: round2(pIn), tight: b > pIn, past: we < now });
+  }
+  const dayB = bills.filter(x => x.date === sel), dayP = pays.filter(x => x.date === sel);
+  const tb = round2(bills.reduce((a, x) => a + x.v, 0)), tp = round2(pays.reduce((a, x) => a + x.v, 0));
+  const { name, year } = monthName(m);
+  const selBal = f && sel >= now && sel <= f.end ? (() => { const k = Object.keys(balAt).filter(k => k <= sel).sort().pop(); return k ? balAt[k] : null; })() : null;
+  return `<div class="row between">
+    <button type="button" class="iconbtn" data-act="calmonth" data-d="-1" aria-label="Previous month">${I.left}</button>
+    <div style="text-align:center"><div class="label">${year}</div><h1 class="h1">${name}</h1></div>
+    <button type="button" class="iconbtn" data-act="calmonth" data-d="1" aria-label="Next month">${I.right}</button></div>
+  <div class="grid2">
+    <section class="glass card" style="gap:2px;padding:14px"><div class="tiny muted" style="font-weight:700">Bills and repayments</div><div class="mid num">${money0(tb)}</div><div class="tiny muted">${bills.length} payments</div></section>
+    <section class="glass card" style="gap:2px;padding:14px"><div class="tiny muted" style="font-weight:700">Pay coming in</div><div class="mid num" style="color:var(--good)">${money0(tp)}</div><div class="tiny muted">${pays.length} paydays</div></section>
+  </div>
+  <section class="glass card" aria-label="Calendar">
+    <div class="cal">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(x => `<div class="wd">${x}</div>`).join('')}${cells.join('')}</div>
+    <div class="row small muted" style="gap:14px;flex-wrap:wrap"><span><span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:var(--good)"></span> Payday</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:var(--warn)"></span> Bill</span><span style="color:var(--over);font-weight:700">Red date: below $0</span></div>
+    ${lowBal ? `<div class="tiny muted num">Lowest point this month: <strong style="color:${lowBal.v < 0 ? 'var(--over)' : 'var(--fg)'}">${lowBal.v < 0 ? '−' : ''}${money(Math.abs(lowBal.v))}</strong> on ${esc(shortDay(lowBal.date))}. Balances come from the forecast.</div>` : ''}
+  </section>
+  <section class="glass card" aria-label="Selected day">
+    <div class="row between"><div class="h2">${esc(shortDay(sel))}</div>${selBal != null ? `<span class="chip ${selBal < 0 ? 'over' : ''} num">Balance ${selBal < 0 ? '−' : ''}${money0(Math.abs(selBal))}</span>` : ''}</div>
+    ${dayP.length || dayB.length ? [...dayP.map(x => `<div class="row between small"><span style="min-width:0">${esc(x.name)}${x.done ? ' <span class="muted">· paid</span>' : ''}</span><span class="num" style="color:var(--good);font-weight:700">+${money(x.v)}</span></div>`), ...dayB.map(x => `<div class="row between small"><span style="min-width:0">${esc(x.name)} <span class="muted">· ${esc(x.cat || '')}${x.done ? ' · done' : ''}</span></span><span class="num" style="font-weight:700">−${money(x.v)}</span></div>`)].join('') : '<div class="small muted">No bills or pay on this day.</div>'}
+  </section>
+  <section class="glass card" aria-label="Weeks">
+    <div class="h2">Week by week</div>
+    ${weeks.map(w => { const dm = iso => new Date(iso + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); return `<div class="row between small" style="gap:8px${w.past ? ';opacity:.55' : ''}"><span style="min-width:0">${esc(dm(w.w))} – ${esc(dm(w.we))}</span><span class="num muted" style="margin-left:auto">${money0(w.b)} out · ${money0(w.p)} in</span>${w.past ? '<span class="chip" style="background:var(--track);color:var(--muted)">Past</span>' : w.tight ? '<span class="chip over">Tight</span>' : '<span class="chip">OK</span>'}</div>`; }).join('')}
+    <div class="tiny muted">A week is tight when its bills are more than the pay coming in that week. Bills come from your recurring list. <button type="button" class="link" data-act="recurring">Manage bills</button></div>
+  </section>`;
+}
+
+/* ---------- Borrowing: loans and pay advances, and what they cost ---------- */
+const LENDER_NAMES = [[/beforepay/i, 'Beforepay'], [/wagetap/i, 'Wagetap'], [/wage ?pay/i, 'WagePay'], [/wagego|ewa payout/i, 'WageGo'], [/cash converters/i, 'Cash Converters'], [/jacaranda/i, 'Jacaranda'], [/credit corp|wallet ?wizard|wizit|power ?up|\bpup\b|\bccc\b/i, 'Credit Corp'], [/fundo|zepto/i, 'Fundo'], [/stay finance/i, 'Stay Finance'], [/latitude|lattitude|creditline/i, 'Latitude'], [/personal loan|ln repay|cba personal/i, 'CBA']];
+const ADVANCE_RE = /beforepay|wagetap|wagepay|wagego/i;
+function lenderOf(desc) { for (const [re, n] of LENDER_NAMES) if (re.test(desc || '')) return n; for (const d of config.debts || []) { const re = debtRe(d); if (re && re.test(desc || '')) return d.name; } return null; }
+function viewBorrowing() {
+  const cur = mk(today()), keys = Array.from({ length: 12 }, (_, i) => addMonths(cur, i - 11)), six = keys.slice(-6), sixFrom = six[0];
+  const vals = keys.map(k => totals(k).borrowed), maxV = Math.max(1, ...vals);
+  const pay = k => txOf(k).filter(t => t.type === 'income' && t.cat === 'Paycheck').reduce((a, t) => a + (+t.amount || 0), 0);
+  let streak = 0; for (let i = keys.length - 1; i >= 0 && vals[i] > 0; i--) streak++;
+  const L = {};
+  for (const k of six) for (const t of txOf(k)) {
+    const borrowed = isBorrowed(t), repay = t.type === 'expense' && t.cat === 'Debt';
+    if (!borrowed && !repay) continue;
+    const n = lenderOf(t.desc) || (borrowed ? storeName(t.desc) : null); if (!n) continue;
+    L[n] = L[n] || { n, b: 0, r: 0, adv: ADVANCE_RE.test(n) }; if (borrowed) L[n].b += +t.amount || 0; else L[n].r += +t.amount || 0;
+  }
+  const lenders = Object.values(L).filter(x => x.b > 0 || x.r > 0).sort((a, b) => b.b - a.b || b.r - a.r);
+  const adv = lenders.filter(x => x.adv), advB = adv.reduce((a, x) => a + x.b, 0), advR = adv.reduce((a, x) => a + x.r, 0);
+  const sixB = round2(six.reduce((a, k) => a + totals(k).borrowed, 0)), sixPay = six.reduce((a, k) => a + pay(k), 0);
+  const thisM = vals[11], lastM = vals[10];
+  return `<section class="glass card" aria-label="Borrowed this month">
+    <div class="small muted" style="font-weight:600">Borrowed this month</div>
+    <div class="big num" style="color:${thisM > 0 ? 'var(--over)' : 'var(--fg)'}">${money(thisM)}</div>
+    <div class="row" style="flex-wrap:wrap"><span class="chip ${thisM > lastM ? 'over' : ''} num">Last month ${money0(lastM)}</span><span class="chip num">${money0(sixB / 6)} a month, last 6 months</span>${streak > 1 ? `<span class="chip over num">${streak === 12 ? 'Every month for a year' : streak + ' months in a row'}</span>` : ''}</div>
+    ${sixPay > 0 ? `<div class="small muted num">Over 6 months you borrowed ${money0(sixB)}. That is ${Math.round(sixB / sixPay * 100)}% on top of your pay.</div>` : ''}
+  </section>
+  <section class="glass card" aria-label="Borrowed each month">
+    <div class="h2">Each month</div>
+    <div class="chart" role="img" aria-label="Money borrowed each month for 12 months" style="height:116px">${keys.map((k, i) => `<div class="col"><div class="pair" style="height:90px"><i style="width:14px;background:${k === cur ? 'var(--over)' : 'var(--warn)'};height:${Math.round(vals[i] / maxV * 90)}px"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+k.slice(5) - 1]}</span></div>`).join('')}</div>
+    <div class="tiny muted">Counts money from loans and pay advances in the Borrowed category.</div>
+  </section>
+  ${adv.length ? `<section class="glass card" aria-label="Pay advance cost">
+    <div class="h2">Pay advances, last 6 months</div>
+    <div class="grid2"><div><div class="tiny muted" style="font-weight:700">Borrowed</div><div class="mid num">${money0(advB)}</div></div><div><div class="tiny muted" style="font-weight:700">Paid back</div><div class="mid num">${money0(advR)}</div></div></div>
+    ${advR > advB ? `<div class="small"><strong class="num" style="color:var(--over)">${money0(advR - advB)}</strong> more paid back than borrowed. Most of that is fees, if you owe about the same as 6 months ago.</div>` : `<div class="small muted">You borrowed more than you paid back, so some is still owing.</div>`}
+  </section>` : ''}
+  <section class="glass card" aria-label="By lender">
+    <div class="h2">By lender, last 6 months</div>
+    ${lenders.length ? `<div class="tablebox"><table><thead><tr><th>Lender</th><th>Borrowed</th><th>Paid back</th></tr></thead><tbody>${lenders.map(x => `<tr><td>${esc(x.n)}</td><td>${money0(x.b)}</td><td>${money0(x.r)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">No borrowing found in the last 6 months.</div>'}
+    <div class="tiny muted">Paid back counts Debt payments that name the lender. <button type="button" class="link" data-act="plantab" data-p="debts">See debts</button></div>
+  </section>`;
+}
+
+/* ---------- Commission: how the next commission covers the month ahead ---------- */
+function commCycles() {
+  const pi = payInfo(), now = isoDate(today()), out = [];
+  for (let i = 0; out.length < 3 && i < 5; i++) {
+    const pd = firstPaydayOf(addMonths(mk(today()), i), pi); if (pd < now) continue;
+    const end = addDaysIso(firstPaydayOf(addMonths(pd.slice(0, 7), 1), pi), -1);
+    out.push({ pd, end });
+  }
+  return out;
+}
+function commPlan(cy, whatIf) {
+  const pi = payInfo(), base = baseGrossYear() / payPeriods(), entered = commissionRows().rows.find(x => x.payDate === cy.pd && x.actual == null), cs = commissionStats();
+  let take, gross = null, src;
+  if (whatIf != null && whatIf >= 0) { gross = whatIf; take = payAfterTax(round2(base + whatIf), cy.pd); src = 'what if'; }
+  else if (entered) { take = entered.expect; gross = round2(entered.total - base); src = 'entered'; }
+  else { take = round2(pi.base + cs.avg); src = 'average'; }
+  const step = pi.freq === 'fortnightly' ? 14 : 7; let basePays = 0; for (let d = addDaysIso(cy.pd, step); d <= cy.end; d = addDaysIso(d, step)) basePays++;
+  const inc = round2(take + basePays * pi.base), bills = scheduledBills(cy.pd, cy.end), billT = round2(bills.reduce((a, x) => a + x.v, 0));
+  const days = dayDiff(cy.pd, cy.end) + 1, monthsF = days / (365 / 12);
+  // spending plan beyond bills: each category's plan less the bills already in it
+  const billCat = {}; for (const x of bills) billCat[x.cat] = (billCat[x.cat] || 0) + x.v;
+  const spend = round2(config.expense.reduce((a, c) => a + Math.max(0, (+c.planned || 0) * monthsF - (billCat[c.name] || 0)), 0));
+  const groups = {}; for (const x of bills) { const g = x.cat === 'Debt' ? 'Debt repayments' : x.cat === 'Home' ? 'Rent and home' : x.cat || 'Other'; groups[g] = (groups[g] || 0) + x.v; }
+  return { take, gross, src, basePays, inc, billT, spend, left: round2(inc - billT - spend), afterBills: round2(inc - billT), days, weeks: days / 7, groups: Object.entries(groups).sort((a, b) => b[1] - a[1]) };
+}
+function cpBody() {
+  const cys = commCycles(); if (!cys.length) return '<div class="glass empty"><div class="small">Set your pay in More, then Pay.</div></div>';
+  const cy = cys[Math.min(ui.cpIdx || 0, cys.length - 1)], w = String(ui.cpWhat || '').trim() ? parseMoney(ui.cpWhat) : NaN;
+  const r = commPlan(cy, Number.isFinite(w) ? Math.abs(w) : null);
+  const debts = typeof debtRows === 'function' ? debtRows().filter(d => d.bal > 0.005).sort((a, b) => a.bal - b.bal) : [];
+  return `<section class="glass card" aria-label="Commission pay">
+    <div class="small muted" style="font-weight:600">Take-home on ${esc(shortDay(cy.pd))}</div>
+    <div class="big num" style="color:var(--good)">${money(r.take)}</div>
+    <div class="small muted num">${r.src === 'entered' ? `Base plus ${money0(r.gross)} commission you entered, after tax.` : r.src === 'what if' ? `Base plus ${money0(r.gross)} commission, after tax.` : 'Base plus your average commission. Enter the real amount when you know it.'}</div>
+    <div class="small muted num">Covers ${Math.round(r.days)} days to ${esc(shortDay(cy.end))}, with ${r.basePays} more base pay${r.basePays === 1 ? '' : 's'} after it.</div>
+  </section>
+  <section class="glass card" aria-label="Where it goes">
+    <div class="h2">Until the next commission</div>
+    <div class="row between small"><span>Pay coming in</span><span class="num" style="font-weight:700;color:var(--good)">+${money(r.inc)}</span></div>
+    ${r.groups.map(([g, v]) => `<div class="row between small"><span class="muted">${esc(g)}</span><span class="num">−${money(v)}</span></div>`).join('')}
+    <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span>Left after bills</span><span class="num" style="font-weight:700;color:${r.afterBills < 0 ? 'var(--over)' : 'var(--fg)'}">${r.afterBills < 0 ? '−' : ''}${money(Math.abs(r.afterBills))}</span></div>
+    <div class="row between small"><span class="muted">Your spending plan for these weeks</span><span class="num">−${money(r.spend)}</span></div>
+    <div class="row between" style="border-top:1px solid var(--divider);padding-top:8px"><span style="font-weight:700">${r.left < 0 ? 'Short by' : 'Left over'}</span><span class="mid num" style="color:${r.left < 0 ? 'var(--over)' : 'var(--good)'}">${money(Math.abs(r.left))}</span></div>
+    <div class="small muted num">${r.afterBills > 0 ? `After bills you have about ${money0(r.afterBills / r.weeks)} a week to live on.` : 'Bills take more than the pay coming in.'}</div>
+    ${r.left > 50 && debts.length ? `<div class="note">Paying ${money0(Math.min(r.left, debts[0].bal))} extra off ${esc(debts[0].name)} (${money0(debts[0].bal)} left) would clear your smallest debt${r.left >= debts[0].bal ? '' : ' sooner'}.</div>` : ''}
+    ${r.left < 0 ? `<div class="note" style="color:var(--over)">To avoid borrowing, cut ${money0(-r.left)} from your spending plan over these weeks, about ${money0(-r.left / r.weeks)} a week.</div>` : ''}
+  </section>`;
+}
+function viewCommission() {
+  const cys = commCycles(), idx = Math.min(ui.cpIdx || 0, Math.max(0, cys.length - 1));
+  return `${cys.length > 1 ? `<div class="seg" role="group" aria-label="Commission payday">${cys.map((c, i) => `<button type="button" data-act="cpsel" data-i="${i}" aria-pressed="${i === idx}">${esc(new Date(c.pd + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }))}</button>`).join('')}</div>` : ''}
+  <div id="cpBody" style="display:flex;flex-direction:column;gap:14px">${cpBody()}</div>
+  <section class="glass card" aria-label="What if">
+    <div class="h2">What if</div>
+    <div class="field"><label for="cp-what">Commission before tax, without base pay</label><input class="input num" id="cp-what" inputmode="decimal" placeholder="Try an amount, like 6000" value="${esc(ui.cpWhat || '')}" autocomplete="off"></div>
+    <div class="tiny muted">Tax is worked out the way your payroll does it. Clear the box to go back. <button type="button" class="link" data-act="paysettings">Enter commission</button></div>
+  </section>`;
+}
+
 function viewTrends() {
   const k = ui.month, prev = addMonths(k, -1), p3 = [1, 2, 3].map(i => addMonths(k, -i));
   const { name, year } = monthName(k);
@@ -2379,6 +2573,9 @@ document.addEventListener('click', async e => {
       ui.period = v; storeSet('lf-period', v); render(); break; }
     case 'year': ui.year += +el.dataset.d; render(); break;
     case 'plantab': ui.tab = 'plan'; ui.planTab = el.dataset.p; render(); break;
+    case 'calmonth': ui.calMonth = addMonths(ui.calMonth || mk(today()), +el.dataset.d); ui.calDay = ''; render(); break;
+    case 'calday': ui.calDay = el.dataset.d; render(); break;
+    case 'cpsel': ui.cpIdx = +el.dataset.i; render(); break;
     case 'filter': ui.filter = el.dataset.f; if (ui.actCat && !ui.actCat.startsWith(ui.filter + '|') && ui.filter !== 'all') ui.actCat = ''; ui.actShow = ACT_PAGE; render(); break;
     case 'actmore': ui.actShow = (ui.actShow || ACT_PAGE) + ACT_PAGE; refreshActivity(); break;
     case 'actclear': ui.search = ''; ui.filter = 'all'; ui.actCat = ''; ui.actDate = 'period'; ui.actFrom = ui.actTo = ''; ui.actShow = ACT_PAGE; render(); break;
@@ -2479,7 +2676,8 @@ function autoCat(desc) {
 }
 document.addEventListener('input', e => {
   const id = e.target.id;
-  if (id === 'search') { ui.search = e.target.value; ui.actShow = ACT_PAGE; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(refreshActivity, 180); }
+  if (id === 'cp-what') { ui.cpWhat = e.target.value; clearTimeout(ui.cpTimer); ui.cpTimer = setTimeout(() => { const b = $('cpBody'); if (b) b.innerHTML = cpBody(); }, 200); }
+  else if (id === 'search') { ui.search = e.target.value; ui.actShow = ACT_PAGE; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(refreshActivity, 180); }
   else if (id === 'f-desc' && sheetCtx && sheetCtx.kind === 'tx') autoCat(e.target.value);
   else if (id === 'f-amount' && sheetCtx && sheetCtx.items) renderSplit();
   else if (id === 'x-amount' && sheetCtx && sheetCtx.kind === 'extra') extraPreview();
