@@ -162,6 +162,8 @@ button{cursor:pointer}
 .cal .amt{font-size:10px;font-weight:700;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%}
 .cal .dots{display:flex;gap:3px;height:6px}
 .cal .dots i{width:6px;height:6px;border-radius:3px;background:var(--warn)} .cal .dots i.pay{background:var(--good)}
+.pchip{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:4px 12px 4px 4px;border-radius:999px;border:1px solid var(--line);background:var(--glass);color:var(--fg);font:inherit;font-weight:700;font-size:15px;box-shadow:inset 0 1px 0 var(--hi)}
+.pdot{width:32px;height:32px;flex:none;border-radius:16px;background:var(--accent);color:var(--accent-ink);display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:14px}
 .daylabel{font-size:12px;font-weight:700;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:12px 4px 2px}
 .empty{padding:22px 8px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:12px;align-items:center}
 .seg{display:flex;padding:4px;border-radius:var(--r-md);background:var(--field);border:1px solid var(--line);gap:4px}
@@ -198,6 +200,7 @@ tr.total td{font-weight:800;border-bottom:0}
 .menu button:last-child{border-bottom:0}
 .menu .ic{width:36px;height:36px;border-radius:var(--r-sm);background:var(--glass-2);display:flex;align-items:center;justify-content:center;color:var(--accent);flex:none}
 .menu .chev{margin-left:auto;color:var(--faint)}
+:root[data-skin="fizz"] .menu .ic{color:var(--fg);background:rgba(255,255,255,.14)}
 .status{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
 .status .led{width:8px;height:8px;border-radius:4px;background:var(--accent)}
 .status .led.local{background:var(--warn)}
@@ -344,9 +347,72 @@ function mergeConfig(d) {
   if (!c.accounts || typeof c.accounts !== 'object' || Array.isArray(c.accounts)) c.accounts = {};
   return c;
 }
+const HH_OK = new Set(['tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
+/* a risky button asks for a second tap */
+function confirmTap(el, msg) { if (el.dataset.armed) return true; el.dataset.armed = '1'; el.textContent = msg; setTimeout(() => { delete el.dataset.armed; }, 4000); return false; }
+/* ---------- people: each person has their own data; Household joins them, view only ---------- */
+let pdata = {}, curId = '1';
+let people = (() => { try { const p = JSON.parse(storeGet('lf-people') || 'null'); if (p && p.names) return p; } catch {} return { names: { '1': 'Me' }, active: '1' }; })();
+const PKEY = id => id === '1' ? 'lf-data' : 'lf-data-' + id;
+const personIds = () => Object.keys(people.names).filter(id => people.names[id] != null).sort();
+const pname = id => (people.names[id] || 'Person ' + id);
+const isHH = () => curId === 'h';
+const hasTwo = () => personIds().length > 1;
+function savePeople() { storeSet('lf-people', JSON.stringify(people)); }
+/* run fn against one person's data, then put everything back */
+function withPerson(id, fn) {
+  const sc = config, sm = months, sid = curId;
+  config = pdata[id].config; months = pdata[id].months; curId = id;
+  try { return fn(); } finally { config = sc; months = sm; curId = sid; }
+}
 function saveLocal() {
-  try { localStorage.setItem('lf-data', JSON.stringify({ config, months })); }
+  if (isHH()) return;
+  pdata[curId] = { config, months };
+  try { localStorage.setItem(PKEY(curId), JSON.stringify({ config, months })); }
   catch { toast('Could not save. Your phone storage may be full. Save a backup file now.'); }
+}
+/* household: categories added up, everyone's bills, debts, goals and accounts with the person's name */
+function buildHousehold() {
+  const c = defaultConfig(), m = {}, p1 = pdata[personIds()[0]].config;
+  Object.assign(c, { expense: [], income: [], recurring: [], goals: [], debts: [], pots: [], accounts: {}, commissions: [], startingBalance: 0, startMonth: '9999-12', mig: 99,
+    safety: { months: +((p1.safety || {}).months) || 6, saved: 0 }, homeOrder: p1.homeOrder, planOrder: p1.planOrder, homeHidden: p1.homeHidden, skin: p1.skin });
+  for (const id of personIds()) {
+    const d = pdata[id], cf = d.config, tag = n => `${n} (${pname(id)})`, pre = x => `${id}~${x}`;
+    for (const type of ['expense', 'income']) for (const k of cf[type] || []) { const ex = c[type].find(x => x.name === k.name); if (ex) ex.planned = round2((+ex.planned || 0) + (+k.planned || 0)); else c[type].push({ name: k.name, planned: +k.planned || 0 }); }
+    for (const r of cf.recurring || []) c.recurring.push({ ...r, id: pre(r.id), name: tag(r.name), owner: id });
+    for (const g of cf.goals || []) c.goals.push({ ...g, id: pre(g.id), name: tag(g.name), owner: id });
+    for (const x of cf.pots || []) c.pots.push({ ...x, id: pre(x.id), name: tag(x.name), owner: id });
+    for (const x of cf.debts || []) c.debts.push({ ...x, id: pre(x.id), match: x.match || x.name, name: tag(x.name), owner: id });
+    for (const [k, a] of Object.entries(cf.accounts || {})) c.accounts[pre(k)] = { ...a, last4: a.last4, name: tag(a.name), owner: id };
+    c.startingBalance = round2(c.startingBalance + (+cf.startingBalance || 0)); if (cf.startMonth && cf.startMonth < c.startMonth) c.startMonth = cf.startMonth;
+    c.safety.saved = round2(c.safety.saved + (+((cf.safety || {}).saved) || 0));
+    for (const [k, list] of Object.entries(d.months || {})) for (const t of list) (m[k] = m[k] || []).push({ ...t, id: String(t.id).startsWith('rec-') ? 'rec-' + id + '~' + String(t.id).slice(4) : pre(t.id), owner: id, ...(t.acct ? { acct: pre(t.acct) } : {}), ...(t.debtId ? { debtId: pre(t.debtId) } : {}) });
+  }
+  if (c.startMonth === '9999-12') c.startMonth = mk(today());
+  return { config: c, months: m };
+}
+function switchPerson(id) {
+  if (id === 'h' && !hasTwo()) id = personIds()[0];
+  if (id === 'h') { const h = buildHousehold(); config = h.config; months = h.months; curId = 'h'; if (ui.planTab === 'commission') ui.planTab = 'budget'; }
+  else { config = pdata[id].config; months = pdata[id].months; curId = id; }
+  people.active = id; savePeople();
+  $('addBtn').disabled = isHH();
+  closeSheet(); render(); window.scrollTo(0, 0);
+}
+function personChip() {
+  if (!hasTwo() || !['home', 'activity', 'plan', 'category'].includes(ui.tab)) return '';
+  return `<div class="row between" style="gap:8px"><button type="button" class="pchip" data-act="people"><span class="pdot" aria-hidden="true">${isHH() ? '⌂' : esc(pname(curId).charAt(0).toUpperCase())}</span>${isHH() ? 'Household' : esc(pname(curId))}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>${isHH() ? '<span class="tiny muted">Both people, view only</span>' : ''}</div>`;
+}
+function openPeople() {
+  const ids = personIds();
+  openSheet(`${sheetHead('People')}
+  <div class="list">${[...ids.map(id => [id, pname(id), 'Their own money and plans']), ...(ids.length > 1 ? [['h', 'Household', 'Everyone together, view only']] : [])].map(([id, n, sub]) => `<button type="button" class="row between" data-act="personpick" data-id="${id}" style="gap:12px;min-height:56px;border:0;border-bottom:1px solid var(--divider);background:transparent;color:inherit;padding:0;font:inherit;text-align:left;width:100%"><span class="pdot" aria-hidden="true">${id === 'h' ? '⌂' : esc(n.charAt(0).toUpperCase())}</span><span style="flex:1;min-width:0"><span style="display:block;font-weight:700">${esc(n)}</span><span class="tiny muted">${sub}</span></span>${curId === id ? '<span class="chip">Open</span>' : ''}</button>`).join('')}</div>
+  <div class="h2" style="margin-top:6px">Names</div>
+  ${ids.map(id => `<div class="field"><label for="pn-${id}">Person ${id}</label><input class="input" id="pn-${id}" value="${esc(pname(id))}" maxlength="24" autocomplete="off"></div>`).join('')}
+  ${ids.length < 2 ? `<div class="field"><label for="pn-new">Add a second person</label><input class="input" id="pn-new" placeholder="Their name" maxlength="24" autocomplete="off"></div>` : ''}
+  <button type="button" class="btn primary block" data-act="peoplesave">Save</button>
+  <div class="note">Each person's data stays on this phone. To bring in someone's data from their own phone, save a backup file there, open their name here, then restore it in Backup and restore.</div>
+  ${ids.length > 1 ? `<button type="button" class="btn danger block" data-act="persondel" data-id="${ids[ids.length - 1]}">Remove ${esc(pname(ids[ids.length - 1]))} and their data</button>` : ''}`, { kind: 'people' });
 }
 async function saveConfig() { saveLocal(); }
 async function saveMonth() { saveLocal(); }
@@ -354,7 +420,13 @@ async function saveMonths() { saveLocal(); }
 
 async function initStore() {
   mode = 'local';
-  try { const raw = storeGet('lf-data'); if (raw) { const p = JSON.parse(raw); config = mergeConfig(p.config); months = p.months || {}; } } catch {}
+  if (!people.names['1']) people.names['1'] = 'Me';
+  for (const id of personIds()) {
+    let d = { config: id === '1' ? config : mergeConfig({ startMonth: mk(today()) }), months: {} };
+    try { const raw = storeGet(PKEY(id)); if (raw) { const p = JSON.parse(raw); d = { config: mergeConfig(p.config), months: p.months || {} }; } } catch {}
+    pdata[id] = d;
+  }
+  config = pdata['1'].config; months = pdata['1'].months; curId = '1';
   gotConfig = gotMonths = true;
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch {}
   afterLoad();
@@ -376,9 +448,12 @@ function migrate() {
 }
 function afterLoad() {
   if (!(gotConfig && gotMonths)) return;
-  migrate();
-  $('addBtn').disabled = false;
-  if (!recurringDone) { recurringDone = true; applyRecurring(); }
+  for (const id of personIds()) withPerson(id, () => { migrate(); });
+  if (!recurringDone) { recurringDone = true; for (const id of personIds()) withPerson(id, () => { applyRecurring(); }); }
+  const want = people.active === 'h' ? 'h' : (pdata[people.active] ? people.active : '1');
+  if (want === 'h' && hasTwo()) { const h = buildHousehold(); config = h.config; months = h.months; curId = 'h'; } else { config = pdata[want].config; months = pdata[want].months; curId = want; }
+  $('addBtn').disabled = isHH();
+  autoBackup();
   render();
 }
 
@@ -418,6 +493,7 @@ function netBetween(fromExcl, toIncl) {
   return n;
 }
 function balanceAt(iso) {
+  if (isHH()) { const v = personIds().map(id => withPerson(id, () => balanceAt(iso))).filter(x => x != null); return v.length ? round2(v.reduce((a, b) => a + b, 0)) : null; }
   const s = `${config.startMonth}-01`; if (iso < addDaysIso(s, -1)) return null;
   const a = balanceAnchor();
   if (a) return round2(iso >= a.date ? a.v + netBetween(a.date, iso) : a.v - netBetween(iso, a.date));
@@ -497,6 +573,8 @@ const I = {
   save: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>',
   tag: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>',
   wallet: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg>',
+  people: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>',
+  report: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 17v-3M12 17v-6M15 17v-4"/></svg>',
   chev: '<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'
 };
 function monthNav(act) {
@@ -508,7 +586,7 @@ function monthNav(act) {
 }
 function txRow(t) {
   const sign = t.type === 'income' ? '+' : '−';
-  const src = (t.pending ? ' · Pending' : '') + (t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.shot ? ' · Screenshot' : t.src === 'import' ? ' · Imported' : '');
+  const src = (isHH() && t.owner ? ' · ' + esc(pname(t.owner)) : '') + (t.pending ? ' · Pending' : '') + (t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.shot ? ' · Screenshot' : t.src === 'import' ? ' · Imported' : '');
   return `<div class="swipe" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}"><button type="button" class="swipe-del" data-act="swipedel" tabindex="-1" aria-label="Delete ${esc(t.desc)}">Delete</button><button type="button" class="tx" data-act="edit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}">
     <span class="avatar" aria-hidden="true">${esc((t.desc || '?').trim().charAt(0).toUpperCase())}</span>
     <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${src}</div></span>
@@ -609,7 +687,7 @@ function viewHome() {
   </section>`
   };
   const hidden = config.homeHidden || [];
-  return `${loadingNote()}${ordered(HOME_SECTIONS, config.homeOrder).filter(([id]) => !hidden.includes(id)).map(([id]) => S[id]()).join('\n')}
+  return `${loadingNote()}${backupBanner()}${ordered(HOME_SECTIONS, config.homeOrder).filter(([id]) => !hidden.includes(id)).map(([id]) => S[id]()).join('\n')}
   <button type="button" class="link" style="align-self:center;padding:8px" data-act="arrange">Arrange Home</button>`;
 }
 
@@ -700,7 +778,7 @@ function viewCategory() {
 }
 
 function viewPlan() {
-  const tabs = `<div class="seg" role="group" aria-label="Plan views" style="overflow-x:auto;scrollbar-width:none">${ordered(PLAN_TABS, config.planOrder).map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}" style="font-size:13px;padding:0 10px;flex:1 0 auto">${l}</button>`).join('')}</div>`;
+  const tabs = `<div class="seg" role="group" aria-label="Plan views" style="overflow-x:auto;scrollbar-width:none">${ordered(PLAN_TABS, config.planOrder).filter(([k]) => !(isHH() && k === 'commission')).map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}" style="font-size:13px;padding:0 10px;flex:1 0 auto">${l}</button>`).join('')}</div>`;
   if (ui.planTab === 'goals') return `${tabs}${viewGoals()}`;
   if (ui.planTab === 'debts') return `${tabs}${viewDebts()}`;
   if (ui.planTab === 'savings') return `${tabs}${viewSavings()}`;
@@ -708,7 +786,7 @@ function viewPlan() {
   if (ui.planTab === 'year') return `${tabs}${viewYear()}`;
   if (ui.planTab === 'calendar') return `${tabs}${viewCalendar()}`;
   if (ui.planTab === 'borrow') return `${tabs}${viewBorrowing()}`;
-  if (ui.planTab === 'commission') return `${tabs}${viewCommission()}`;
+  if (ui.planTab === 'commission' && !isHH()) return `${tabs}${viewCommission()}`;
   const p = curPeriod(), wk = p.kind === 'week';
   const block = (type, title) => {
     const rows = catRows(p, type);
@@ -716,7 +794,7 @@ function viewPlan() {
     return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
       ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
         <div class="row between"><button type="button" data-act="catview" data-type="${type}" data-name="${esc(r.name)}" aria-label="Open ${esc(r.name)}" style="min-width:0;flex:1;display:flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;text-align:left;color:inherit;font:inherit;cursor:pointer"><span style="min-width:0"><span style="display:block;font-weight:600">${esc(r.name)}</span><span class="tiny num" style="display:block;color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</span></span><span class="muted" style="flex:none;display:flex">${I.chev}</span></button>
-        ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0">` : '<span class="tiny muted">Not in list</span>'}</div>
+        ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0" ${isHH() ? 'readonly' : ''}>` : '<span class="tiny muted">Not in list</span>'}</div>
         ${type === 'expense' ? statusBar(r) : ''}</div>`).join('')}</section>`;
   };
   const note = wk ? 'Weekly plans are your monthly plans spread over the year. Change one and the other updates.' : 'Plans repeat every month.';
@@ -761,8 +839,15 @@ function viewYear() {
 
 function viewMore() {
   const st = ['', 'Saved on this iPhone only. Nothing leaves your phone. Save a backup file now and then.'];
+  const pp = `<button type="button" data-act="people"><span class="ic">${I.people}</span>People and household<span class="small muted" style="margin-left:auto">${isHH() ? 'Household' : esc(pname(curId))}</span>${I.chev}</button>
+    <button type="button" data-act="report"><span class="ic">${I.report}</span>Monthly report${I.chev}</button>`;
+  if (isHH()) return `<h1 class="h1">More</h1>
+  <section class="glass card" style="padding:6px 16px"><div class="menu">${pp}
+    <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button></div></section>
+  <div class="note" style="padding:0 4px">Household joins everyone's data and is view only. Open a person to change settings, bills or transactions.</div>
+  ${themeCards()}`;
   return `<h1 class="h1">More</h1>
-  <section class="glass card" style="padding:6px 16px"><div class="menu">
+  <section class="glass card" style="padding:6px 16px"><div class="menu">${pp}
     <button type="button" data-act="settings"><span class="ic">${I.wallet}</span>Starting balance<span class="small muted num" style="margin-left:auto">${money(config.startingBalance)}</span>${I.chev}</button>
     <button type="button" data-act="paysettings"><span class="ic">${I.wallet}</span>Pay and payday<span class="small muted num" style="margin-left:auto">${money0(payInfo().base)} ${esc(WEEKDAYS[payInfo().weekday].slice(0, 3))}</span>${I.chev}</button>
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
@@ -773,7 +858,11 @@ function viewMore() {
     <button type="button" data-act="imports"><span class="ic">${I.repeat}</span>Import history<span class="small muted" style="margin-left:auto">${importGroups().length}</span>${I.chev}</button>
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button>
   </div></section>
-  <section class="glass card" aria-label="Colour theme"><div class="h2">Colour theme</div>
+  ${themeCards()}`;
+}
+function themeCards() {
+  const st = ['', 'Saved on this iPhone only. Nothing leaves your phone. Save a backup file now and then.'];
+  return `<section class="glass card" aria-label="Colour theme"><div class="h2">Colour theme</div>
     <div class="swatches">${SKINS.map(k => `<button type="button" class="swatch" data-act="skin" data-v="${k.id}" aria-pressed="${currentSkin() === k.id}">
       <span class="sw" aria-hidden="true" style="background:radial-gradient(circle at 30% 30%, ${k.b1}, transparent 70%),radial-gradient(circle at 75% 75%, ${k.b2}, transparent 70%),${k.bg}"><i style="background:${k.accent}"></i></span>
       <span>${k.name}</span></button>`).join('')}</div></section>
@@ -867,6 +956,7 @@ const isCardAcct = x => x.kind ? x.kind === 'card' : (/card|neo|credit|ifnf|mast
 const isSavingsAcct = x => !isCardAcct(x) && (x.kind ? x.kind === 'savings' : /sav|goal/i.test(x.name || ''));
 const acctKey = x => x.last4 || x.name;
 function cashNow() {
+  if (isHH()) { const v = personIds().map(id => withPerson(id, () => cashNow())).filter(Boolean); return v.length ? { v: round2(v.reduce((a, x) => a + x.v, 0)), src: v.every(x => x.src === 'bank') ? 'bank' : 'app' } : null; }
   const now = isoDate(today()), list = Object.values(config.accounts || {}).filter(x => !isCardAcct(x) && x.count !== false);
   const fresh = list.filter(x => x.at && Date.now() - x.at < 36 * 3600000);
   if (fresh.length && fresh.length === list.length) {
@@ -877,6 +967,15 @@ function cashNow() {
 }
 /* walk forward day by day: bills out, base pay in, and find the lowest point */
 function forecast(opt = {}) {
+  if (isHH()) {
+    const ids = personIds(), parts = ids.map(id => [id, withPerson(id, () => forecast(opt))]).filter(x => x[1]); if (!parts.length) return null;
+    const now = isoDate(today()), cash = { v: round2(parts.reduce((a, [, f]) => a + f.cash.v, 0)), src: parts.every(([, f]) => f.cash.src === 'bank') ? 'bank' : 'app' };
+    const ev = parts.flatMap(([id, f]) => f.ev.map(e => ({ ...e, name: `${e.name} (${pname(id)})` }))).sort((a, b) => a.date.localeCompare(b.date) || (b.pay ? 1 : 0) - (a.pay ? 1 : 0));
+    let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
+    for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
+    const pi = { ...parts[0][1].pi, base: round2(parts.reduce((a, [, f]) => a + (f.pi.base || 0), 0)) };
+    return { cash, pi, p1: parts.map(([, f]) => f.p1).sort()[0], end: parts.map(([, f]) => f.end).sort().pop(), ev, low: round2(low), lowDate, lowName, neg, billsTotal: round2(parts.reduce((a, [, f]) => a + f.billsTotal, 0)), endBal: bal };
+  }
   const now = isoDate(today()), cash = cashNow(); if (!cash) return null;
   const pi = payInfo(), p1 = nextPayday(pi), p2 = addDaysIso(p1, pi.freq === 'fortnightly' ? 14 : 7);
   const end = opt.days ? addDaysIso(now, opt.days) : [p2, addDaysIso(now, 14)].sort().pop();
@@ -1072,7 +1171,7 @@ const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function debtRe(d) { const w = String(d.match || d.name || '').split(',').map(x => x.trim()).filter(Boolean); return w.length ? new RegExp(w.map(escRe).join('|'), 'i') : null; }
 function debtFlows(d) {
   const re = debtRe(d) || /^\b$/;
-  return allTx().filter(t => t.debtId === d.id || (!t.debtId && re.test(t.desc)) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
+  return allTx().filter(t => (!d.owner || !t.owner || t.owner === d.owner)).filter(t => t.debtId === d.id || (!t.debtId && re.test(t.desc)) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
 }
 /* a flow counts after the balance date; an extra payment logged on that day counts if logged after the balance was set */
 const afterAsOf = (d, f) => f.date > d.asOf || (f.date === d.asOf && f.t.debtId === d.id && (+f.t.at || 0) > (+d.setAt || 0));
@@ -1419,7 +1518,7 @@ function viewAccounts() {
   const cash = list.filter(x => !isCardAcct(x)), total = round2(cash.reduce((a, x) => a + (+x.balance || 0), 0)), avail = round2(cash.reduce((a, x) => a + (+x.available || 0), 0));
   const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   return `<section class="glass card" aria-label="Accounts">
-    <div class="row between"><div class="h2">Accounts</div><button type="button" class="link" data-act="shots">Update</button></div>
+    <div class="row between"><div class="h2">Accounts</div>${isHH() ? '' : '<button type="button" class="link" data-act="shots">Update</button>'}</div>
     ${list.sort((a, b) => (b.balance || 0) - (a.balance || 0)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.available) + ' available · ' : ''}${x.at ? ago(x.at) : ''}</div>${x.due && x.owing ? (x.due < isoDate(today()) ? `<div class="tiny" style="color:var(--over);font-weight:700">${money(x.owing)} overdue since ${esc(shortDay(x.due))}</div>` : `<div class="tiny muted">${money(x.owing)} due ${esc(shortDay(x.due))}</div>`) : ''}</div><div class="num" style="font-weight:700;color:${(x.balance || 0) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(x.balance || 0)}</div></div>`).join('')}
     <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total in bank accounts</span><span class="num" style="font-weight:700">${money(total)}${avail ? ` <span class="muted">(${money(avail)} available)</span>` : ''}</span></div></section>`;
 }
@@ -1459,6 +1558,7 @@ function essentials() {
 }
 /* real money in savings accounts; pots and the safety net divide it up */
 function savingsBalance() {
+  if (isHH()) { const v = personIds().map(id => [id, withPerson(id, () => savingsBalance())]); return { v: round2(v.reduce((a, [, x]) => a + x.v, 0)), names: v.flatMap(([id, x]) => x.names.map(n => `${n} (${pname(id)})`)) }; }
   const list = Object.values(config.accounts || {}).filter(isSavingsAcct);
   if (list.length) return { v: round2(list.reduce((a, x) => a + (+x.balance || 0), 0)), names: list.map(x => x.name) };
   return { v: +(config.safety || {}).manual || 0, names: [] };
@@ -1568,6 +1668,7 @@ function scheduledBills(from, to) {
 }
 /* paydays between two dates: real paychecks in the past, base pay or entered commission ahead */
 function scheduledPays(from, to) {
+  if (isHH()) return personIds().flatMap(id => withPerson(id, () => scheduledPays(from, to)).map(x => ({ ...x, name: `${x.name} (${pname(id)})` }))).sort((a, b) => a.date.localeCompare(b.date));
   const pi = payInfo(), now = isoDate(today()), out = [], step = pi.freq === 'fortnightly' ? 14 : 7;
   for (const t of allTx()) if (t.type === 'income' && t.cat === 'Paycheck' && t.date >= from && t.date <= to && t.date <= now) out.push({ date: t.date, name: t.amount > pi.base * 1.5 ? 'Pay with commission' : 'Pay', v: +t.amount || 0, done: true });
   if (!pi.base) return out.sort((a, b) => a.date.localeCompare(b.date));
@@ -1757,18 +1858,18 @@ function viewTrends() {
     <tbody>${cats.map(c => `<tr><td>${esc(c.name)}</td><td>${money0(c.now)}</td><td>${arrow(c.diff)}</td><td class="muted">${money0(c.avg)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No spending this month</td></tr>'}</tbody></table></div></section>
   <section class="glass card"><div class="h2">Top stores</div><div class="tiny muted">Where your money went in ${esc(name)}, not counting Debt.</div>
     ${top.length ? top.map(s => `<div class="row between small" style="gap:8px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(s.s)}</span><span class="muted num" style="white-space:nowrap">${s.n}×</span><span class="num" style="width:74px;text-align:right">${money0(s.total)}</span><span style="width:74px;text-align:right" class="tiny">${arrow(s.total - s.last)}</span></div>`).join('') : '<div class="note">No spending this month.</div>'}</section>
-  <section class="glass card"><div class="row between"><div class="h2">Pay: base and commission</div><button type="button" class="link" data-act="paysettings">Pay</button></div>
+  ${isHH() ? '' : `<section class="glass card"><div class="row between"><div class="h2">Pay: base and commission</div><button type="button" class="link" data-act="paysettings">Pay</button></div>
     <div class="grid2"><div><div class="tiny muted" style="font-weight:700">Base pay a month</div><div class="mid num">${money0(baseMonthly)}</div></div><div><div class="tiny muted" style="font-weight:700">Average commission</div><div class="mid num">${money0(avgComm)}</div></div></div>
     <div class="tablebox"><table><thead><tr><th>Month</th><th>Base</th><th>Commission</th><th>Total</th></tr></thead>
     <tbody>${split.slice().reverse().map(x => `<tr><td>${MONTHS[+x.m.slice(5) - 1].slice(0, 3)} ${x.m.slice(2, 4)}</td><td>${money0(x.base)}</td><td>${money0(x.comm)}</td><td>${money0(x.base + x.comm)}</td></tr>`).join('')}</tbody></table></div>
-    <div class="note">Living on base pay alone: ${money0(baseMonthly)} a month against ${money0(billsMonthly)} of recurring bills${planned ? ` and a ${money0(planned)} budget` : ''}. ${baseMonthly >= billsMonthly ? `Base pay covers your bills with ${money0(baseMonthly - billsMonthly)} to spare.` : `Your bills need ${money0(billsMonthly - baseMonthly)} of commission each month.`} Your lowest commission month was ${money0(minComm)}.</div></section>`;
+    <div class="note">Living on base pay alone: ${money0(baseMonthly)} a month against ${money0(billsMonthly)} of recurring bills${planned ? ` and a ${money0(planned)} budget` : ''}. ${baseMonthly >= billsMonthly ? `Base pay covers your bills with ${money0(baseMonthly - billsMonthly)} to spare.` : `Your bills need ${money0(billsMonthly - baseMonthly)} of commission each month.`} Your lowest commission month was ${money0(minComm)}.</div></section>`}`;
 }
 
 function render() {
   const v = $('view');
   const active = document.activeElement && document.activeElement.id;
   const selStart = active && document.activeElement.selectionStart;
-  v.innerHTML = ui.tab === 'category' ? viewCategory() : ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome();
+  v.innerHTML = personChip() + (ui.tab === 'category' ? viewCategory() : ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome());
   const navTab = ui.tab === 'category' ? 'plan' : ui.tab;
   document.querySelectorAll('nav.tabs [data-tab]').forEach(b => { if (b.dataset.tab === navTab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
   if (active && $(active) && v.contains($(active))) { const el = $(active); el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch {} }
@@ -2509,13 +2610,178 @@ async function deleteImport(btn) {
 
 /* backup */
 function openBackup(pending) {
+  const fileAt = +storeGet('lf-file-at') || 0, snapAt = +storeGet('lf-snap-at') || 0;
+  const when = ms => ms ? new Date(ms).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) : 'never';
+  const many = pending && pending.people > 1, who = isHH() ? 'everyone' : pname(curId);
   openSheet(`${sheetHead('Backup and restore')}
-  <div class="note">Save a backup file to Files or iCloud Drive now and then. You can restore it here at any time.</div>
+  <div class="note">A backup file holds ${hasTwo() ? 'everyone in the app' : 'all your data'}. Save it to iCloud Drive so it is safe if you lose your phone.</div>
   <button type="button" class="btn primary block" data-act="exportjson">${I.save} Save backup file</button>
-  <button type="button" class="btn block" data-act="exportcsv">Export transactions as CSV</button>
+  <div class="tiny muted">Last backup file: ${esc(when(fileAt))}. The app reminds you on Home when a week has passed.</div>
+  <button type="button" class="btn block" data-act="exportcsv">Export ${isHH() ? 'household' : 'my'} transactions as CSV</button>
   <label class="scan" for="restorefile">${I.upload}<span>Restore from a backup file</span><input id="restorefile" type="file" accept=".json,application/json"></label>
-  ${pending ? `<div class="glass card" style=""><div class="small">This backup has <strong class="num">${pending.count}</strong> transactions from ${esc(pending.when)}. Restoring replaces everything in the app now.</div><button type="button" class="btn danger block" data-act="restorego">Replace my data with this backup</button></div>` : ''}`,
-  { kind: 'backup', pending });
+  ${pending ? `<div class="glass card"><div class="small">This backup is from ${esc(pending.when)}. It has <strong class="num">${pending.count}</strong> transactions${many ? ` for ${pending.people} people: ${esc(pending.names.join(' and '))}` : ''}.</div>
+    ${many || isHH() ? `<button type="button" class="btn danger block" data-act="restoreall">Replace everyone with this backup</button>` : ''}
+    ${isHH() ? '' : `<button type="button" class="btn ${many ? '' : 'danger'} block" data-act="restorego">${many ? `Restore only ${esc(pending.names[0])} into ${esc(who)}` : `Replace ${esc(who)}'s data with this backup`}</button>`}</div>` : ''}
+  <div class="h2" style="margin-top:6px">Automatic backups</div>
+  <div class="tiny muted">Once a week the app keeps a copy of everyone's data on this phone, the last 6 weeks. These help undo a mistake. They are lost if the app is deleted, so still save a file. Last copy: ${esc(when(snapAt))}.</div>
+  <div id="snapList" class="list"><div class="small muted">Loading…</div></div>`,
+  { kind: 'backup', pending, data: pending && pending.data });
+  snapList().then(list => { const el = $('snapList'); if (!el) return; el.innerHTML = list.length ? list.map(x => `<div class="row between" style="min-height:48px;border-bottom:1px solid var(--divider);gap:8px"><span class="small">${esc(new Date(x.at).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}</span><button type="button" class="btn" style="min-height:38px" data-act="snaprestore" data-at="${x.at}">Restore</button></div>`).join('') : '<div class="small muted">None yet.</div>'; }).catch(() => { const el = $('snapList'); if (el) el.innerHTML = '<div class="small muted">Automatic backups are not available in this browser.</div>'; });
+}
+/* everyone's data in one file; the first person is also at the top level so older versions can read it */
+function fullBackup() {
+  const ids = personIds(), first = ids[0], others = {};
+  for (const id of ids.slice(1)) others[id] = pdata[id];
+  return { app: 'lagoon-finance', v: 2, exportedAt: new Date().toISOString(), people: { names: people.names }, config: pdata[first].config, months: pdata[first].months, others };
+}
+/* ---------- monthly report: one self-contained page with charts, saved or shared as a file ---------- */
+function openReport() {
+  const cur = mk(today()), def = +isoDate(today()).slice(8) < 8 ? addMonths(cur, -1) : cur;
+  const opts = Array.from({ length: 12 }, (_, i) => addMonths(cur, -i)).filter(k => k >= addMonths(config.startMonth, 0));
+  openSheet(`${sheetHead('Monthly report')}
+  <div class="small muted">A report on one month: what came in, what you spent and where, where you could do better, and how your goals, debts and savings are going.</div>
+  <div class="field"><label for="rp-month">Month</label><select class="input" id="rp-month">${opts.map(k => `<option value="${k}" ${k === (ui.rpMonth || def) ? 'selected' : ''}>${esc(monthName(k).name)} ${monthName(k).year}${k === cur ? ' (so far)' : ''}</option>`).join('')}</select></div>
+  <div class="tiny muted">For ${isHH() ? 'the household' : esc(pname(curId))}.${hasTwo() ? ' Switch people to report on someone else.' : ''}</div>
+  <button type="button" class="btn primary block" data-act="reportgo">${I.report} View report</button>
+  <button type="button" class="btn block" data-act="reportshare">${I.save} Save or share the file</button>
+  <div class="note">The file opens in any browser. To make a PDF, open it and choose Print, then Save to Files.</div>`, { kind: 'report' });
+}
+const rpEsc = s => esc(s);
+const RP = { ink: '#1D2430', muted: '#5B6573', line: '#E3E7EC', inc: '#2B6E8F', exp: '#D9822B', over: '#B4232A', good: '#2E7D5B', soft: '#F4F6F8' };
+function rpBars(cols, h = 150) {
+  const max = Math.max(1, ...cols.flatMap(c => c.v)), W = 640, gw = W / cols.length, bw = Math.min(26, gw / (cols[0].v.length + 1.5));
+  const colors = [RP.inc, RP.exp];
+  return `<svg viewBox="0 0 ${W} ${h + 48}" width="100%" role="img" aria-label="Chart"><g transform="translate(0,8)">${[0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${h - h * f + 10}" y2="${h - h * f + 10}" stroke="${RP.line}"/><text x="0" y="${h - h * f + 6}" font-size="10" fill="${RP.muted}">${kMoney(max * f)}</text>`).join('')}
+  ${cols.map((c, i) => c.v.map((v, j) => { const bh = Math.max(1, v / max * h), x = i * gw + gw / 2 - (c.v.length * bw) / 2 + j * bw; return `<rect x="${x.toFixed(1)}" y="${(h - bh + 10).toFixed(1)}" width="${(bw - 3).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${c.hi === j ? RP.over : colors[j % 2]}"${c.dim ? ' opacity=".45"' : ''}/>`; }).join('') + `<text x="${(i * gw + gw / 2).toFixed(1)}" y="${h + 30}" font-size="12" text-anchor="middle" fill="${RP.muted}" font-weight="700">${rpEsc(c.l)}</text>`).join('')}</g></svg>`;
+}
+function rpHBars(rows) {
+  const max = Math.max(1, ...rows.map(r => Math.max(r.v, r.plan || 0)));
+  return rows.map(r => `<div class="hb"><div class="hl"><span>${rpEsc(r.l)}</span><span class="num">${money(r.v)}${r.plan ? ` <span class="mut">of ${money0(r.plan)}</span>` : ''}</span></div><div class="ht"><i style="width:${(r.v / max * 100).toFixed(1)}%;background:${r.plan && r.v > r.plan ? RP.over : RP.exp}"></i>${r.plan ? `<b style="left:${(r.plan / max * 100).toFixed(1)}%"></b>` : ''}</div></div>`).join('');
+}
+function reportInsights(k, rows, tt) {
+  const tx = txOf(k).filter(t => t.type === 'expense'), out = [];
+  const sum = (re, f = () => true) => { const l = tx.filter(t => re.test(t.desc || '') && f(t)); return { v: round2(l.reduce((a, t) => a + (+t.amount || 0), 0)), n: l.length }; };
+  const p3 = [1, 2, 3].map(i => addMonths(k, -i));
+  for (const r of rows.filter(r => r.planned > 0 && r.actual > r.planned).sort((a, b) => (b.actual - b.planned) - (a.actual - a.planned)).slice(0, 3))
+    out.push({ t: `${r.name} went over plan`, d: `You spent ${money(r.actual)} against a ${money0(r.planned)} plan, ${money(r.actual - r.planned)} over.`, size: r.actual - r.planned, save: 0 });
+  for (const r of rows) { const avg = p3.reduce((a, m) => a + catActual(m, 'expense', r.name), 0) / 3; if (r.actual > avg * 1.25 && r.actual - avg > 100 && !(r.planned > 0 && r.actual > r.planned)) out.push({ t: `${r.name} is up on usual`, d: `${money(r.actual)} this month against ${money0(avg)} a month over the 3 months before.`, size: r.actual - avg, save: 0 }); }
+  const dl = sum(/uber ?eats|menulog|doordash|deliveroo|mcdonald|hungry jack|\bkfc\b|domino|pizza hut|guzman|grill'?d|subway|red rooster|oporto|nando|zambrero/i);
+  if (dl.v > 80) out.push({ t: 'Takeaway and delivery', d: `${dl.n} orders came to ${money(dl.v)}. Halving them would save about ${money0(dl.v / 2)} a month.`, save: dl.v / 2 });
+  const lq = sum(/liquor|\bbws\b|dan murphy|bottle ?shop|cellars/i); if (lq.v > 80) out.push({ t: 'Alcohol', d: `${lq.n} purchases came to ${money(lq.v)}.`, save: lq.v / 2 });
+  const cv = sum(/7-?eleven|tobacco|vape|smoke/i); if (cv.v > 80) out.push({ t: 'Convenience stores and tobacco', d: `${cv.n} purchases came to ${money(cv.v)}.`, save: cv.v / 2 });
+  const subs = rows.find(r => r.name === 'Subscriptions'); if (subs && subs.actual > 100) out.push({ t: 'Subscriptions', d: `${money(subs.actual)} went on subscriptions. Cancel any you have not used this month.`, save: subs.actual * 0.25 });
+  const fee = sum(/\bfee\b|fees|dishono|late payment|overdrawn|overdraw|interest charged|account keeping/i); if (fee.v > 10) out.push({ t: 'Fees and charges', d: `${fee.n} fees came to ${money(fee.v)}. Most can be avoided by paying on time.`, save: fee.v });
+  const small = tx.filter(t => t.cat !== 'Debt' && +t.amount < 15), sv = round2(small.reduce((a, t) => a + (+t.amount || 0), 0)); if (small.length >= 15) out.push({ t: 'Small purchases add up', d: `${small.length} purchases under $15 came to ${money(sv)}.`, save: sv / 3 });
+  if (tt.borrowed > 0) out.push({ t: 'Borrowing to get by', d: `You borrowed ${money(tt.borrowed)} from loans and pay advances. Each advance costs a fee and takes from next pay.`, save: 0 });
+  if (tt.net < 0) out.push({ t: 'Spending is more than income', d: `You spent ${money(-tt.net)} more than you earned.`, save: 0 });
+  return out.map(x => ({ ...x, size: x.size != null ? x.size : x.save })).sort((a, b) => b.size - a.size).slice(0, 8);
+}
+function reportHTML(k) {
+  const { name, year } = monthName(k), mp = monthPeriod(k), now = isoDate(today()), monthEnd = mp.to < now ? mp.to : now;
+  const who = isHH() ? 'Household' : pname(curId), tt = totals(k), prev = totals(addMonths(k, -1));
+  const rows = catRows(mp, 'expense').filter(r => r.actual > 0 || r.planned > 0).sort((a, b) => b.actual - a.actual);
+  const six = Array.from({ length: 6 }, (_, i) => addMonths(k, i - 5)), sixT = six.map(m => totals(m));
+  const stores = {}; for (const t of txOf(k)) if (t.type === 'expense' && t.cat !== 'Debt') { const n = storeName(t.desc); stores[n] = stores[n] || { n, v: 0, c: 0 }; stores[n].v += +t.amount || 0; stores[n].c++; }
+  const top = Object.values(stores).sort((a, b) => b.v - a.v).slice(0, 10);
+  const exps = txOf(k).filter(t => t.type === 'expense'), big = exps.slice().sort((a, b) => b.amount - a.amount)[0];
+  const ins = reportInsights(k, rows, tt), saveAll = round2(ins.reduce((a, x) => a + x.save, 0));
+  const eb = endBalance(k);
+  // debts at the start and end of the month
+  const dr = debtRows().map(d => { const fl = debtFlows(d), st = debtBalanceAt(d, addDaysIso(mp.from, -1), fl), en = debtBalanceAt(d, monthEnd, fl), paid = round2(-fl.filter(f => f.v < 0 && f.date >= mp.from && f.date <= mp.to).reduce((a, f) => a + f.v, 0)), borrowed = round2(fl.filter(f => f.v > 0 && f.date >= mp.from && f.date <= mp.to).reduce((a, f) => a + f.v, 0)); return { ...d, st: round2(st), en: round2(en), paid, borrowedM: borrowed }; }).filter(d => d.st > 0.5 || d.en > 0.5 || d.paid > 0);
+  const dSt = round2(dr.reduce((a, d) => a + d.st, 0)), dEn = round2(dr.reduce((a, d) => a + d.en, 0)), dPaid = round2(dr.reduce((a, d) => a + d.paid, 0));
+  const debtSix = six.map(m => { const e = `${m}-${pad(daysIn(m))}` < now ? `${m}-${pad(daysIn(m))}` : now; return round2(debtRows().reduce((a, d) => a + debtBalanceAt(d, e), 0)); });
+  const st = savingsState();
+  const goals = (config.goals || []).map(g => { const left = Math.max(0, (+g.target || 0) - (+g.saved || 0)), mLeft = g.due ? monthDiff(mk(today()), g.due) : 0; return { ...g, pct: g.target > 0 ? Math.min(1, g.saved / g.target) : 0, left, per: left > 0 && mLeft > 0 ? left / mLeft : null }; });
+  const pots = (st.pots || []).map(x => ({ ...x, pct: x.target > 0 ? Math.min(1, x.saved / x.target) : 0 }));
+  const chg = (a, b, goodUp) => { if (!b) return ''; const d = a - b, pct = Math.round(Math.abs(d) / Math.abs(b) * 100); if (!pct) return '<span class="mut">same as last month</span>'; const good = goodUp ? d > 0 : d < 0; return `<span style="color:${good ? RP.good : RP.over}">${d > 0 ? '▲' : '▼'} ${pct}% on last month</span>`; };
+  const tile = (l, v, sub, col) => `<div class="tile"><div class="tl">${l}</div><div class="tv num" style="${col ? 'color:' + col : ''}">${v}</div><div class="ts">${sub || ''}</div></div>`;
+  const ring = p => `<svg viewBox="0 0 36 36" width="44" height="44" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="${RP.line}" stroke-width="5"/>${p > 0.005 ? `<circle cx="18" cy="18" r="15" fill="none" stroke="${RP.good}" stroke-width="5" stroke-dasharray="${(p * 94.2).toFixed(1)} 94.2" transform="rotate(-90 18 18)" stroke-linecap="round"/>` : ''}</svg>`;
+  return `<!doctype html><html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${rpEsc(who)} · ${name} ${year} report</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fff;color:${RP.ink};font:15px/1.45 -apple-system,'SF Pro Text','Segoe UI',Roboto,Arial,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}h1{font-size:28px;margin:0 0 2px;letter-spacing:-.01em}h2{font-size:19px;margin:34px 0 10px;padding-top:16px;border-top:2px solid ${RP.ink}}
+.mut{color:${RP.muted}}.num{font-variant-numeric:tabular-nums}.small{font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:16px}.tile{background:${RP.soft};border-radius:14px;padding:12px 14px}.tl{font-size:12px;font-weight:700;color:${RP.muted};text-transform:uppercase;letter-spacing:.04em}.tv{font-size:23px;font-weight:800;margin:2px 0}.ts{font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:right;padding:7px 4px;border-bottom:1px solid ${RP.line}}th:first-child,td:first-child{text-align:left}th{font-size:12px;color:${RP.muted}}
+.hb{margin:9px 0}.hl{display:flex;justify-content:space-between;gap:10px;font-size:14px;font-weight:600}.ht{position:relative;height:10px;background:${RP.soft};border-radius:5px;margin-top:4px}.ht i{display:block;height:100%;border-radius:5px}.ht b{position:absolute;top:-3px;width:2px;height:16px;background:${RP.ink}}
+.ins{border-left:4px solid ${RP.exp};background:${RP.soft};border-radius:0 12px 12px 0;padding:10px 14px;margin:8px 0}.ins b{display:block}.legend{display:flex;gap:14px;font-size:12px;color:${RP.muted};margin:4px 0}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.goal{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid ${RP.line}}.goal div{flex:1;min-width:0}
+.btn{display:inline-block;margin-top:14px;padding:10px 16px;border-radius:999px;border:1px solid ${RP.line};background:${RP.soft};font-weight:700;color:${RP.ink};font-size:14px;cursor:pointer}
+@media print{.btn{display:none}h2{break-after:avoid}.tiles,.ins,.goal,tr{break-inside:avoid}.wrap{padding:0}}
+</style></head><body><div class="wrap">
+<div class="mut small" style="font-weight:700;text-transform:uppercase;letter-spacing:.06em">Lagoon Finance · monthly report</div>
+<h1>${name} ${year}</h1><div class="mut">${rpEsc(who)}${k === mk(today()) ? ` · month so far, to ${rpEsc(shortDay(now))}` : ''} · made ${rpEsc(new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }))}</div>
+<button class="btn" onclick="window.print()">Print or save as PDF</button>
+<div class="tiles">
+${tile('Income', money0(tt.inc), chg(tt.inc, prev.inc, true), RP.inc)}
+${tile('Spent', money0(tt.exp), chg(tt.exp, prev.exp, false), RP.exp)}
+${tile(tt.net >= 0 ? 'Saved' : 'Overspent', money0(Math.abs(tt.net)), tt.net >= 0 ? 'income left after spending' : 'more out than in', tt.net >= 0 ? RP.good : RP.over)}
+${tt.borrowed ? tile('Borrowed', money0(tt.borrowed), 'not counted as income', RP.over) : ''}
+${eb != null ? tile('Balance at month end', (eb < 0 ? '−' : '') + money0(Math.abs(eb)), 'money in your bank accounts') : ''}
+</div>
+
+<h2>Income and spending, 6 months</h2>
+<div class="legend"><span><i style="background:${RP.inc}"></i>Income</span><span><i style="background:${RP.exp}"></i>Spending</span></div>
+${rpBars(six.map((m, i) => ({ l: MONTHS[+m.slice(5) - 1].slice(0, 3), v: [sixT[i].inc, sixT[i].exp], dim: m !== k })))}
+<table><thead><tr><th>Month</th><th>Income</th><th>Spent</th><th>Net</th>${sixT.some(x => x.borrowed) ? '<th>Borrowed</th>' : ''}</tr></thead><tbody>${six.map((m, i) => `<tr${m === k ? ' style="font-weight:800"' : ''}><td>${MONTHS[+m.slice(5) - 1].slice(0, 3)} ${m.slice(2, 4)}</td><td>${money0(sixT[i].inc)}</td><td>${money0(sixT[i].exp)}</td><td style="color:${sixT[i].net < 0 ? RP.over : RP.good}">${sixT[i].net < 0 ? '−' : ''}${money0(Math.abs(sixT[i].net))}</td>${sixT.some(x => x.borrowed) ? `<td>${money0(sixT[i].borrowed)}</td>` : ''}</tr>`).join('')}</tbody></table>
+
+<h2>Where the money went</h2>
+<div class="mut small">Each category against its plan. The black line marks the plan.</div>
+${rpHBars(rows.slice(0, 12).map(r => ({ l: r.name, v: r.actual, plan: r.planned })))}
+<table style="margin-top:12px"><thead><tr><th>Category</th><th>Plan</th><th>Spent</th><th>Left or over</th><th>Share</th></tr></thead><tbody>${rows.map(r => `<tr><td>${rpEsc(r.name)}</td><td>${r.planned ? money0(r.planned) : '—'}</td><td>${money0(r.actual)}</td><td style="color:${r.planned ? (r.diff < 0 ? RP.over : RP.good) : RP.muted}">${r.planned ? (r.diff < 0 ? money0(-r.diff) + ' over' : money0(r.diff) + ' left') : '—'}</td><td>${tt.exp ? Math.round(r.actual / tt.exp * 100) + '%' : ''}</td></tr>`).join('')}</tbody></table>
+
+<h2>Top places, not counting debt</h2>
+<table><thead><tr><th>Place</th><th>Visits</th><th>Spent</th></tr></thead><tbody>${top.map(x => `<tr><td>${rpEsc(x.n)}</td><td>${x.c}</td><td>${money(x.v)}</td></tr>`).join('') || '<tr><td colspan="3" class="mut">No spending.</td></tr>'}</tbody></table>
+<div class="mut small" style="margin-top:6px">${exps.length} purchases and payments this month.${big ? ` Biggest: ${rpEsc(big.desc)}, ${money(big.amount)} on ${rpEsc(shortDay(big.date))}.` : ''}</div>
+
+<h2>Where you could do better</h2>
+${ins.length ? ins.map(x => `<div class="ins"><b>${rpEsc(x.t)}</b>${rpEsc(x.d)}</div>`).join('') + (saveAll > 0 ? `<div style="margin-top:10px;font-weight:700">Cutting back on the habits above could free up about <span style="color:${RP.good}">${money0(saveAll)}</span> a month.</div>` : '') : '<div class="mut">Nothing stood out. Spending stayed within plan.</div>'}
+
+<h2>Debts</h2>
+${dr.length ? `<div class="tiles">${tile('Owed at start', money0(dSt))}${tile('Owed at end', money0(dEn), dEn < dSt ? `<span style="color:${RP.good}">▼ ${money0(dSt - dEn)} less</span>` : dEn > dSt ? `<span style="color:${RP.over}">▲ ${money0(dEn - dSt)} more</span>` : '')}${tile('Repaid this month', money0(dPaid))}</div>
+<div class="mut small" style="margin-top:14px">Total owed at the end of each month</div>
+${rpBars(six.map((m, i) => ({ l: MONTHS[+m.slice(5) - 1].slice(0, 3), v: [debtSix[i]], hi: m === k ? 0 : -1 })), 110).replace(new RegExp(RP.inc, 'g'), '#8A94A3')}
+<table><thead><tr><th>Debt</th><th>Start</th><th>End</th><th>Repaid</th><th>Paid off</th></tr></thead><tbody>${dr.sort((a, b) => b.en - a.en).map(d => `<tr><td>${rpEsc(d.name)}</td><td>${money0(d.st)}</td><td>${money0(d.en)}</td><td>${money0(d.paid)}</td><td class="mut">${rpEsc(d.payoff || '')}</td></tr>`).join('')}</tbody></table>
+${dr.length ? (() => { const s0 = dr.filter(d => d.en > 0.5).sort((a, b) => a.en - b.en)[0]; return s0 ? `<div class="ins" style="border-color:${RP.good}"><b>Next to clear: ${rpEsc(s0.name)}</b>${money(s0.en)} left. Putting any spare money here first frees up its ${money0(s0.weekly || 0)} a week repayment soonest.</div>` : ''; })() : ''}` : '<div class="mut">No debts recorded.</div>'}
+
+<h2>Goals and savings</h2>
+<div class="tiles">${tile('Total savings', money0(st.bal.v), st.bal.names.length ? rpEsc(st.bal.names.join(', ')) : 'no savings account ticked')}${tile('Safety net', st.covers.toFixed(1) + ' months', `${money0(st.net)} of ${money0(st.target)} for ${st.months} months`)}</div>
+${goals.length || pots.length ? [...goals.map(g => `<div class="goal">${ring(g.pct)}<div><b>${rpEsc(g.name)}</b><div class="small mut num">${money0(g.saved)} of ${money0(g.target)} · ${Math.round(g.pct * 100)}%${g.per ? ` · save ${money0(g.per)} a month to finish by ${rpEsc(monthName(g.due).name.slice(0, 3))} ${monthName(g.due).year}` : g.left <= 0 ? ' · reached' : ''}</div></div></div>`), ...pots.map(x => `<div class="goal">${ring(x.pct)}<div><b>${rpEsc(x.name)}</b><div class="small mut num">${money0(x.saved)} of ${money0(x.target)} saved</div></div></div>`)].join('') : '<div class="mut" style="margin-top:10px">No goals set yet. Add one in Plan, then Goals.</div>'}
+
+<div class="mut small" style="margin-top:36px;border-top:1px solid ${RP.line};padding-top:10px">Made by Lagoon Finance from the data on this phone. Figures are as recorded in the app and are not financial advice.</div>
+</div></body></html>`;
+}
+function showReport(k) {
+  closeSheet();
+  let ov = $('reportView'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'reportView';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:60;background:#fff;display:flex;flex-direction:column';
+  ov.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;background:var(--bg);border-bottom:1px solid var(--line)"><button type="button" class="btn" data-act="reportclose">Close</button><span style="font-weight:700;color:var(--fg)">${esc(monthName(k).name)} report</span><button type="button" class="btn primary" data-act="reportshare">${I.save} Save</button></div><iframe title="Monthly report" style="flex:1;border:0;width:100%;background:#fff"></iframe>`;
+  document.body.appendChild(ov); ov.querySelector('iframe').srcdoc = reportHTML(k);
+}
+
+/* weekly copies kept on this phone in IndexedDB */
+function snapDB() { return new Promise((res, rej) => { const r = indexedDB.open('lagoon-snaps', 1); r.onupgradeneeded = () => r.result.createObjectStore('snaps', { keyPath: 'at' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+function snapReq(mode, fn) { return snapDB().then(db => new Promise((res, rej) => { const tx = db.transaction('snaps', mode), st = tx.objectStore('snaps'), r = fn(st); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); })); }
+async function snapList() { const all = await snapReq('readonly', st => st.getAllKeys()); return (all || []).sort((a, b) => b - a).map(at => ({ at })); }
+async function snapSave() {
+  const at = Date.now(); await snapReq('readwrite', st => st.put({ at, json: JSON.stringify(fullBackup()) }));
+  const keys = (await snapReq('readonly', st => st.getAllKeys()) || []).sort((a, b) => b - a);
+  for (const k of keys.slice(6)) await snapReq('readwrite', st => st.delete(k));
+  storeSet('lf-snap-at', String(at));
+}
+async function autoBackup() {
+  try { if (Date.now() - (+storeGet('lf-snap-at') || 0) >= 7 * 864e5 && window.indexedDB) await snapSave(); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && gotConfig) { autoBackup(); if (ui.tab === 'home' && !sheetCtx) render(); } });
+/* Home reminder when the last backup file is more than a week old */
+function backupBanner() {
+  const fileAt = +storeGet('lf-file-at') || 0, later = +storeGet('lf-file-later') || 0, now = Date.now();
+  if (now - fileAt < 7 * 864e5 || now < later || !allTx().length) return '';
+  const days = fileAt ? Math.floor((now - fileAt) / 864e5) : null;
+  return `<section class="glass card" aria-label="Backup due" style="gap:10px"><div class="row between"><div class="h2">Backup due</div><span class="chip warn">${days == null ? 'No file yet' : days + ' days'}</span></div>
+    <div class="small muted">Save a backup file to iCloud Drive. It keeps your data safe if you lose your phone.</div>
+    <div class="row"><button type="button" class="btn primary" style="flex:1" data-act="backupnow">${I.save} Save backup</button><button type="button" class="btn" data-act="backuplater">Later</button></div></section>`;
 }
 async function saveFile(filename, data, type) {
   const file = new File([data], filename, { type });
@@ -2525,29 +2791,39 @@ async function saveFile(filename, data, type) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
-function exportJSON() { saveFile(`lagoon-finance-backup-${isoDate(today())}.json`, JSON.stringify({ app: 'lagoon-finance', v: 1, exportedAt: new Date().toISOString(), config, months }, null, 1), 'application/json'); }
+async function exportJSON() { await saveFile(`lagoon-finance-backup-${isoDate(today())}.json`, JSON.stringify(fullBackup()), 'application/json'); storeSet('lf-file-at', String(Date.now())); if (ui.tab === 'home') render(); }
 function exportCSV() {
   const all = Object.values(months).flat().sort((a, b) => a.date.localeCompare(b.date));
   const q = s => `"${String(s).replace(/"/g, '""')}"`;
   const csv = ['Date,Type,Category,Description,Amount', ...all.map(t => [t.date, t.type, q(t.cat), q(t.desc), (t.type === 'income' ? '' : '-') + (+t.amount).toFixed(2)].join(','))].join('\n');
   saveFile(`lagoon-finance-transactions-${isoDate(today())}.csv`, csv, 'text/csv');
 }
-async function readBackup(file) {
-  try {
-    const p = JSON.parse(await file.text());
-    if (p.app !== 'lagoon-finance' || !p.config || typeof p.months !== 'object') throw 0;
-    const count = Object.values(p.months).reduce((a, m) => a + (Array.isArray(m) ? m.length : 0), 0);
-    sheetCtx.data = p; openBackup({ count, when: p.exportedAt ? new Date(p.exportedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : 'an earlier date' }); sheetCtx.data = p;
-  } catch { toast('That is not a Lagoon Finance backup file.'); }
+function offerRestore(p, whenTxt) {
+  if (!p || p.app !== 'lagoon-finance' || !p.config || typeof p.months !== 'object') throw 0;
+  const sets = [p.months, ...Object.values(p.others || {}).map(o => o.months || {})];
+  const count = sets.reduce((a, ms) => a + Object.values(ms).reduce((b, m) => b + (Array.isArray(m) ? m.length : 0), 0), 0);
+  const pn = (p.people && p.people.names) || {}, firstKey = Object.keys(pn).sort()[0] || '1', ids = [firstKey, ...Object.keys(p.others || {})], names = ids.map((id, i) => pn[id] || (i === 0 ? 'Person 1' : 'Person ' + id));
+  openBackup({ count, people: ids.length, names, data: p, when: whenTxt || (p.exportedAt ? new Date(p.exportedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : 'an earlier date') });
 }
+async function readBackup(file) {
+  try { offerRestore(JSON.parse(await file.text())); } catch { toast('That is not a Lagoon Finance backup file.'); }
+}
+function cleanMonths(src) { const out = {}; for (const [k, v] of Object.entries(src || {})) if (/^\d{4}-\d{2}$/.test(k) && Array.isArray(v)) out[k] = v; return out; }
+/* one person: the file's first person goes into whoever is open */
 async function runRestore() {
+  const p = sheetCtx.data; if (!p || isHH()) return;
+  config = mergeConfig(p.config); months = cleanMonths(p.months);
+  migrate(); saveLocal(); closeSheet(); render(); toast('Backup restored');
+}
+/* everyone: the people in the file replace the people in the app */
+function runRestoreAll() {
   const p = sheetCtx.data; if (!p) return;
-  const old = Object.keys(months);
-  config = mergeConfig(p.config); months = {};
-  for (const [k, v] of Object.entries(p.months)) if (/^\d{4}-\d{2}$/.test(k) && Array.isArray(v)) months[k] = v;
-  migrate(); closeSheet(); render();
-  await saveConfig(); await saveMonths([...new Set([...old, ...Object.keys(months)])]);
-  toast('Backup restored');
+  const fileIds = p.people && p.people.names ? Object.keys(p.people.names).sort() : ['1'];
+  for (const id of personIds()) { try { localStorage.removeItem(PKEY(id)); } catch {} }
+  pdata = {}; people.names = {};
+  const sets = [[fileIds[0] || '1', p.config, p.months], ...Object.entries(p.others || {}).map(([id, o]) => [id, o.config, o.months])];
+  sets.forEach(([id, c, m], i) => { const nid = String(i + 1); people.names[nid] = (p.people && p.people.names && p.people.names[id]) || (i ? 'Person ' + nid : 'Me'); pdata[nid] = { config: mergeConfig(c), months: cleanMonths(m) }; withPerson(nid, () => { migrate(); saveLocal(); }); });
+  savePeople(); switchPerson(hasTwo() && isHH() ? 'h' : '1'); toast('Backup restored for everyone');
 }
 
 /* toast */
@@ -2563,7 +2839,16 @@ function toast(msg, action) {
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const a = el.dataset.act;
+  if (isHH() && !HH_OK.has(a)) { toast('Household is view only. Open a person to change this.', { label: 'People', run: openPeople }); return; }
   switch (a) {
+    case 'people': openPeople(); break;
+    case 'personpick': switchPerson(el.dataset.id); break;
+    case 'peoplesave': {
+      for (const id of personIds()) { const v = ($('pn-' + id) || {}).value; if (v && v.trim()) people.names[id] = v.trim(); }
+      const nv = (($('pn-new') || {}).value || '').trim();
+      if (nv) { const id = String(Math.max(...personIds().map(Number)) + 1); people.names[id] = nv; pdata[id] = { config: mergeConfig({ startMonth: mk(today()) }), months: {} }; withPerson(id, () => saveLocal()); savePeople(); switchPerson(id); toast(`Added ${nv}. Import their bank file or restore their backup in More.`); break; }
+      savePeople(); if (isHH()) switchPerson('h'); else { closeSheet(); render(); } toast('Saved'); break; }
+    case 'persondel': { const id = el.dataset.id; if (id === '1') break; if (!confirmTap(el, `Tap again to remove ${pname(id)}`)) break; delete people.names[id]; delete pdata[id]; try { localStorage.removeItem(PKEY(id)); } catch {} savePeople(); switchPerson('1'); toast('Removed'); break; }
     case 'tab': closeSheet(); ui.tab = el.dataset.tab; storeSet('lf-tab', ui.tab); render(); window.scrollTo(0, 0); break;
     case 'month': if (ui.period === 'week') { ui.week = addDaysIso(ui.week, 7 * +el.dataset.d); ui.month = ui.week.slice(0, 7); } else ui.month = addMonths(ui.month, +el.dataset.d); render(); break;
     case 'period': {
@@ -2667,6 +2952,14 @@ document.addEventListener('click', async e => {
     case 'exportjson': exportJSON(); break;
     case 'exportcsv': exportCSV(); break;
     case 'restorego': runRestore(); break;
+    case 'report': openReport(); break;
+    case 'reportgo': ui.rpMonth = ($('rp-month') || {}).value || ui.rpMonth || mk(today()); showReport(ui.rpMonth); break;
+    case 'reportshare': { const k = ($('rp-month') || {}).value || ui.rpMonth || mk(today()); ui.rpMonth = k; await saveFile(`lagoon-report-${isHH() ? 'household' : pname(curId).toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${k}.html`, reportHTML(k), 'text/html'); break; }
+    case 'reportclose': { const ov = $('reportView'); if (ov) ov.remove(); break; }
+    case 'restoreall': if (!confirmTap(el, 'Tap again to replace everyone')) break; runRestoreAll(); break;
+    case 'snaprestore': { try { const r = await snapReq('readonly', st => st.get(+el.dataset.at)); offerRestore(JSON.parse(r.json), new Date(+el.dataset.at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) + ' (automatic)'); } catch { toast('Could not read that backup.'); } break; }
+    case 'backupnow': exportJSON(); break;
+    case 'backuplater': storeSet('lf-file-later', String(Date.now() + 2 * 864e5)); render(); break;
   }
 });
 function autoCat(desc) {
@@ -2687,6 +2980,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (isHH() && !/^(act-|pn-)/.test(el.id || '')) { render(); toast('Household is view only. Open a person to change this.'); return; }
   if (el.id === 'act-cat') { ui.actCat = el.value; ui.actShow = ACT_PAGE; render(); return; }
   if (el.id === 'act-date') { ui.actDate = el.value; ui.actShow = ACT_PAGE; render(); return; }
   if (el.id === 'act-from' || el.id === 'act-to') { ui[el.id === 'act-from' ? 'actFrom' : 'actTo'] = el.value; ui.actShow = ACT_PAGE; refreshActivity(); return; }
