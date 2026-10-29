@@ -347,7 +347,7 @@ function mergeConfig(d) {
   if (!c.accounts || typeof c.accounts !== 'object' || Array.isArray(c.accounts)) c.accounts = {};
   return c;
 }
-const HH_OK = new Set(['tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
+const HH_OK = new Set(['tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'fcliving', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
 /* a risky button asks for a second tap */
 function confirmTap(el, msg) { if (el.dataset.armed) return true; el.dataset.armed = '1'; el.textContent = msg; setTimeout(() => { delete el.dataset.armed; }, 4000); return false; }
 /* ---------- people: each person has their own data; Household joins them, view only ---------- */
@@ -966,34 +966,48 @@ function cashNow() {
   const b = balanceAt(now), a = balanceAnchor(); return b == null ? null : { v: round2(b - (a ? a.cards : 0)), src: 'app' };
 }
 /* walk forward day by day: bills out, base pay in, and find the lowest point */
+/* bare-minimum living costs that are not already a recurring bill, as a daily amount */
+function livingCosts() {
+  const e = essentials(), bills = config.recurring.filter(r => (r.type || 'expense') === 'expense');
+  const billM = f => round2(bills.filter(f).reduce((a, r) => a + perMonth(r.amount, recFreq(r)), 0));
+  const cover = { rent: billM(r => /\brent\b/i.test(r.name) || (r.cat === 'Home' && /real estate/i.test(r.name))), utilities: billM(r => r.cat === 'Utilities'), insurance: billM(r => r.cat === 'Insurance'), health: billM(r => r.cat === 'Health/Medical'), pets: billM(r => r.cat === 'Pets'), car: billM(r => r.cat === 'Transportation' && CARFIX_RE.test(r.name)) };
+  const lines = e.lines.map(l => { const c = cover[l.id] || 0; return { label: l.label, monthly: round2(l.value), covered: round2(Math.min(c, l.value)), left: round2(Math.max(0, l.value - c)) }; });
+  const monthly = round2(lines.reduce((a, l) => a + l.left, 0));
+  return { lines, monthly, daily: monthly / (365 / 12), weekly: round2(monthly * 12 / 52) };
+}
+const livingOn = () => config.fcLiving !== false;
 function forecast(opt = {}) {
   if (isHH()) {
     const ids = personIds(), parts = ids.map(id => [id, withPerson(id, () => forecast(opt))]).filter(x => x[1]); if (!parts.length) return null;
     const now = isoDate(today()), cash = { v: round2(parts.reduce((a, [, f]) => a + f.cash.v, 0)), src: parts.every(([, f]) => f.cash.src === 'bank') ? 'bank' : 'app' };
-    const ev = parts.flatMap(([id, f]) => f.ev.map(e => ({ ...e, name: `${e.name} (${pname(id)})` }))).sort((a, b) => a.date.localeCompare(b.date) || (b.pay ? 1 : 0) - (a.pay ? 1 : 0));
+    const rank = e => e.pay ? 0 : e.living ? 2 : 1, ev = parts.flatMap(([id, f]) => f.ev.map(e => ({ ...e, name: e.living ? e.name : `${e.name} (${pname(id)})` }))).sort((a, b) => a.date.localeCompare(b.date) || rank(a) - rank(b));
     let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
     for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
     const pi = { ...parts[0][1].pi, base: round2(parts.reduce((a, [, f]) => a + (f.pi.base || 0), 0)) };
-    return { cash, pi, p1: parts.map(([, f]) => f.p1).sort()[0], end: parts.map(([, f]) => f.end).sort().pop(), ev, low: round2(low), lowDate, lowName, neg, billsTotal: round2(parts.reduce((a, [, f]) => a + f.billsTotal, 0)), endBal: bal };
+    return { cash, pi, p1: parts.map(([, f]) => f.p1).sort()[0], end: parts.map(([, f]) => f.end).sort().pop(), ev, low: round2(low), lowDate, lowName, neg, billsTotal: round2(parts.reduce((a, [, f]) => a + f.billsTotal, 0)), livingTotal: round2(parts.reduce((a, [, f]) => a + (f.livingTotal || 0), 0)), living: parts.some(([, f]) => f.living) ? { weekly: round2(parts.reduce((a, [, f]) => a + (f.living ? f.living.weekly : 0), 0)) } : null, endBal: bal };
   }
   const now = isoDate(today()), cash = cashNow(); if (!cash) return null;
   const pi = payInfo(), p1 = nextPayday(pi), p2 = addDaysIso(p1, pi.freq === 'fortnightly' ? 14 : 7);
   const end = opt.days ? addDaysIso(now, opt.days) : [p2, addDaysIso(now, 14)].sort().pop();
   const ev = billsBetween(now, end).map(b => ({ date: b.date, name: b.r.name, v: -(+b.r.amount || 0) }));
   if (cash.src === 'bank') for (const t of txOf(now.slice(0, 7))) if (t.date === now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
-  const cs = opt.comm && opt.comm !== 'none' ? commissionStats() : null, seen = new Set();
+  const commMode = opt.comm || ui.fcComm || 'low', cs = commMode !== 'none' ? commissionStats() : null, seen = new Set();
   const commDays = new Set();
   for (const c of commissionRows().rows) if (c.actual == null && c.payDate >= now && c.payDate <= end) { seen.add(c.payDate.slice(0, 7)); commDays.add(c.payDate); ev.push({ date: c.payDate, name: `Pay with ${monthName(c.month).name} commission`, v: c.expect, pay: true }); }
   if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) {
     if (commDays.has(d)) continue;
-    if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = opt.comm === 'avg' ? cs.avg : cs.low; if (v > 0) { ev.push({ date: d, name: 'Pay with commission (estimate)', v: round2(pi.base + v), pay: true }); continue; } }
+    if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = commMode === 'avg' ? cs.avg : cs.low; if (v > 0) { ev.push({ date: d, name: 'Pay with commission (estimate)', v: round2(pi.base + v), pay: true }); continue; } }
     ev.push({ date: d, name: 'Base pay', v: pi.base, pay: true });
   }
-  ev.sort((a, b) => a.date.localeCompare(b.date) || (b.pay ? 1 : 0) - (a.pay ? 1 : 0));
+  // day-to-day living costs from tomorrow, so the forecast assumes you only spend the bare minimum
+  const lc = livingOn() ? livingCosts() : null;
+  if (lc && lc.daily > 0) for (let d = addDaysIso(now, 1); d <= end; d = addDaysIso(d, 1)) ev.push({ date: d, name: 'Living costs', v: -round2(lc.daily), living: true });
+  const rank = e => e.pay ? 0 : e.living ? 2 : 1;
+  ev.sort((a, b) => a.date.localeCompare(b.date) || rank(a) - rank(b));
   let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
   for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
-  const billsTotal = round2(-ev.filter(e => !e.pay).reduce((a, e) => a + e.v, 0));
-  return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, endBal: bal };
+  const billsTotal = round2(-ev.filter(e => !e.pay && !e.living).reduce((a, e) => a + e.v, 0)), livingTotal = round2(-ev.filter(e => e.living).reduce((a, e) => a + e.v, 0));
+  return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, livingTotal, living: lc, endBal: bal };
 }
 function viewSafe() {
   const f = forecast(); if (!f) return '';
@@ -1003,7 +1017,8 @@ function viewSafe() {
     <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-f.low) : money(safe)}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip ${short ? 'over' : ''} num">${short ? `Runs out ${esc(shortDay(f.neg.date))}` : `About ${money(safe / days)} a day`}</span>
     <span class="small muted num">Next pay ${esc(shortDay(f.p1))}${f.pi.base ? ' · ' + money0(f.pi.base) + ' base' : ''}</span></div>
-    ${short ? `<div class="small" style="color:var(--over)">${esc(f.neg.name)} on ${esc(shortDay(f.neg.date))} takes you below zero.</div>` : ''}
+    ${short ? `<div class="small" style="color:var(--over)">${f.neg.living ? 'Day-to-day living costs' : esc(f.neg.name)} on ${esc(shortDay(f.neg.date))} ${f.neg.living ? 'take' : 'takes'} you below zero.</div>` : ''}
+    ${f.living ? `<div class="tiny muted num">After bills and ${money0(f.living.weekly)} a week of bare-minimum living costs.</div>` : ''}
   </section>`;
 }
 /* ATO Schedule 1 weekly tax table, scale 2 (tax-free threshold claimed): tax = a × x − b, x = whole dollars + 0.99 */
@@ -1068,7 +1083,7 @@ function commissionStats() {
   return { n: vals.length, avg: vals.length ? round2(vals.reduce((a, b) => a + b, 0) / vals.length) : 0, low: vals.length ? round2(Math.min(...vals)) : 0 };
 }
 function viewForecast() {
-  const days = +ui.fcDays || 14, comm = ui.fcComm || 'none', f = forecast({ days, comm }); 
+  const days = +ui.fcDays || 14, comm = ui.fcComm || 'low', f = forecast({ days, comm }); 
   const back = `<div class="row between"><button type="button" class="iconbtn" data-act="tab" data-tab="home" aria-label="Back">${I.left}</button><h1 class="h1">Forecast</h1><button type="button" class="link" data-act="paysettings">Pay</button></div>`;
   if (!f) return `${back}<div class="glass empty"><div class="small">Set your starting balance or read your bank screenshots first.</div></div>`;
   const cs = commissionStats(), short = f.low < 0;
@@ -1078,13 +1093,20 @@ function viewForecast() {
   const W = 340, H = 150, lo = Math.min(0, ...pts.map(p => p.v)), hi = Math.max(1, ...pts.map(p => p.v)), y = v => Math.round(8 + (hi - v) / (hi - lo) * (H - 24)), x = k => Math.round(k / Math.max(1, pts.length - 1) * W);
   const path = pts.map((p, k) => `${k ? 'L' : 'M'}${x(k)},${y(p.v)}`).join(' ');
   const zero = y(0);
-  const days2 = {}; for (const e of f.ev) (days2[e.date] = days2[e.date] || []).push(e);
+  const days2 = {}; let acc = null;
+  const flush = () => { if (acc) { (days2[acc.date] = days2[acc.date] || []).push({ name: acc.n > 1 ? `Living costs, ${new Date(acc.start + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} to ${new Date(acc.date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : 'Living costs', v: round2(acc.v), bal: acc.bal, living: true }); acc = null; } };
+  f.ev.forEach((e, i) => {
+    if (!e.living) { flush(); (days2[e.date] = days2[e.date] || []).push(e); return; }
+    acc = acc ? { ...acc, date: e.date, v: acc.v + e.v, bal: e.bal, n: acc.n + 1 } : { start: e.date, date: e.date, v: e.v, bal: e.bal, n: 1 };
+    const nx = f.ev[i + 1]; if (!nx || !nx.living || e === f.neg || new Date(e.date + 'T00:00:00').getDay() === 0) flush();
+  });
+  flush();
   const seg = (k, l, cur, act) => `<button type="button" data-act="${act}" data-v="${k}" aria-pressed="${cur === k}">${l}</button>`;
   return `${back}
   <section class="glass card">
     <div class="small muted" style="font-weight:600">${short ? 'Lowest point' : 'Safe to spend'} until ${esc(shortDay(f.end))}</div>
     <div class="big num" style="color:${short ? 'var(--over)' : 'var(--fg)'}">${short ? '−' + money(-f.low) : money(f.low)}</div>
-    ${short ? `<div class="note" style="color:var(--over)">Your money runs out on ${esc(shortDay(f.neg.date))} when ${esc(f.neg.name)} is due. The lowest point is ${esc(shortDay(f.lowDate))}.</div>` : ''}
+    ${short ? `<div class="note" style="color:var(--over)">Your money runs out on ${esc(shortDay(f.neg.date))}${f.neg.living ? ', from day-to-day living costs' : ` when ${esc(f.neg.name)} is due`}. The lowest point is ${esc(shortDay(f.lowDate))}.</div>` : ''}
     <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Balance each day">
       <line x1="0" x2="${W}" y1="${zero}" y2="${zero}" stroke="var(--line)" stroke-dasharray="4 4"/>
       <clipPath id="fcBelow"><rect x="0" y="${zero}" width="${W}" height="${H}"/></clipPath>
@@ -1093,7 +1115,13 @@ function viewForecast() {
       <text x="2" y="${H - 2}" font-size="11" fill="var(--muted)">${esc(shortDay(now).replace(/^[^,]*,\s*/, ''))}</text><text x="${W - 2}" y="${H - 2}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(shortDay(f.end).replace(/^[^,]*,\s*/, ''))}</text>
     </svg>
     <div class="small muted num">${f.cash.src === 'bank' ? `Starts from your bank balances, ${money(f.cash.v)} available` : `Starts from the app’s balance, ${money(f.cash.v)}`}. Adds base pay of ${money0(f.pi.base)} each payday${(config.commissions || []).length ? ' and the commission you entered' : ''}, and takes out ${money(f.billsTotal)} of bills.</div>
+  ${f.living ? `<div class="small muted num">Also takes out ${money(f.livingTotal)} of bare-minimum living costs, ${money0(f.living.weekly)} a week, spread over each day.</div>` : ''}
   </section>
+  <div class="seg" role="group" aria-label="Living costs">${seg('on', 'With living costs', livingOn() ? 'on' : 'off', 'fcliving')}${seg('off', 'Bills only', livingOn() ? 'on' : 'off', 'fcliving')}</div>
+  ${livingOn() && !isHH() ? (() => { const lc = livingCosts(); return `<section class="glass card" aria-label="Living costs" style="gap:8px"><div class="row between"><div class="h2">Bare-minimum living costs</div><button type="button" class="link" data-act="essentials">Change</button></div>
+    ${lc.lines.map(l => `<div class="row between small" style="gap:8px"><span style="min-width:0">${esc(l.label)}${l.covered ? ` <span class="muted">· ${money0(l.covered)} already a bill</span>` : ''}</span><span class="num" style="font-weight:700">${money0(l.left)}</span></div>`).join('')}
+    <div class="row between" style="border-top:1px solid var(--divider);padding-top:8px"><span class="small" style="font-weight:700">Taken out each month</span><span class="num" style="font-weight:800">${money0(lc.monthly)}</span></div>
+    <div class="tiny muted num">About ${money(lc.daily)} a day from tomorrow. Parts already in your recurring bills are not counted twice.</div></section>`; })() : ''}
   <div class="seg" role="group" aria-label="How far ahead">${seg(14, '2 weeks', days, 'fcdays')}${seg(28, '4 weeks', days, 'fcdays')}${seg(56, '8 weeks', days, 'fcdays')}</div>
   <div class="seg" role="group" aria-label="Commission">${seg('none', 'No commission', comm, 'fccomm')}${seg('low', `Low ${money0(cs.low)}`, comm, 'fccomm')}${seg('avg', `Average ${money0(cs.avg)}`, comm, 'fccomm')}</div>
   <div class="note" style="padding:0 4px">Commission you’ve entered is always included. These options only fill months you haven’t entered yet, on the first payday. Low is your smallest commission in the last ${cs.n} months. <button type="button" class="link" data-act="paysettings">Enter commission</button></div>
@@ -2920,6 +2948,7 @@ document.addEventListener('click', async e => {
     case 'forecast': closeSheet(); ui.tab = 'forecast'; render(); window.scrollTo(0, 0); break;
     case 'fcdays': ui.fcDays = +el.dataset.v; render(); break;
     case 'fccomm': ui.fcComm = el.dataset.v; render(); break;
+    case 'fcliving': { const on = el.dataset.v === 'on'; config.fcLiving = on; if (isHH()) for (const id of personIds()) withPerson(id, () => { config.fcLiving = on; saveLocal(); }); else saveConfig(); render(); break; }
     case 'arrange': openArrange(); break;
     case 'move': { const key = el.dataset.kind === 'home' ? 'homeOrder' : 'planOrder', list = ordered(el.dataset.kind === 'home' ? HOME_SECTIONS : PLAN_TABS, config[key]).map(x => x[0]), i = list.indexOf(el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; config[key] = list; openArrange(); render(); await saveConfig(); break; }
     case 'arrangereset': config.homeOrder = []; config.planOrder = []; config.homeHidden = []; openArrange(); render(); await saveConfig(); break;
