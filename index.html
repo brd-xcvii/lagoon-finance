@@ -545,18 +545,32 @@ function occurrenceRaw(r, n, sy, sm, sd, f) {
 function recSkipped(r, iso) { const s = r.skip || []; return s.includes(iso) || (recFreq(r) === 'monthly' && s.includes(iso.slice(0, 7))); }
 function recAdded(r, iso) { const ids = [`rec-${r.id}-${iso}`, `rec-${r.id}-${iso.slice(0, 7)}`]; return txOf(iso.slice(0, 7)).some(t => ids[0] === t.id || (recFreq(r) === 'monthly' && ids[1] === t.id)); }
 function nextOccurrence(r, afterIso) { for (let n = 0; n < 2000; n++) { const d = occurrence(r, n); if (d === '9999-12-31') return null; if (d > afterIso && !recSkipped(r, d)) return d; } return null; }
+/* a bill already paid: a real bank line for the same amount within 3 days of its date, naming the bill or its lender */
+const BILL_STOP = /^(loan|loans|weekly|monthly|payment|repayment|bill|bills|the|and|plan|account|fee|fees|subscription|arrears|instalment|membership)$/;
+function billWords(name) { return String(name || '').toLowerCase().replace(/\([^)]*\)/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !BILL_STOP.test(w)); }
+function paidMatch(r, iso) {
+  const amt = +r.amount || 0, ws = billWords(r.name), dre = (config.debts || []).map(debtRe).find(re => re && re.test(r.name)), k0 = iso.slice(0, 7);
+  for (const k of [addMonths(k0, -1), k0, addMonths(k0, 1)]) for (const t of txOf(k)) {
+    if (t.src === 'recurring' || t.type !== (r.type || 'expense') || Math.abs(dayDiff(iso, t.date)) > 3 || Math.abs((+t.amount || 0) - amt) > Math.max(0.5, amt * 0.01)) continue;
+    const d = String(t.desc || '').toLowerCase();
+    if (ws.some(w => d.includes(w)) || (dre && dre.test(t.desc || ''))) return t;
+  }
+  return null;
+}
 async function applyRecurring() {
   const now = isoDate(today()), touched = new Set();
   for (const r of config.recurring) {
     for (let n = 0; n < 2000; n++) {
       const d = occurrence(r, n); if (d > now) break;
-      if (recSkipped(r, d) || recAdded(r, d)) continue;
+      if (recSkipped(r, d) || recAdded(r, d) || paidMatch(r, d)) continue;
       const k = d.slice(0, 7);
       (months[k] = months[k] || []).push({ id: `rec-${r.id}-${d}`, date: d, amount: +r.amount, desc: r.name, cat: r.cat, type: r.type, src: 'recurring' });
       touched.add(k);
     }
   }
-  if (touched.size) { await saveMonths([...touched]); toast('Added the recurring items that were due'); render(); }
+  // a bill the app added earlier is removed once the real bank line for it is in
+  for (const k of Object.keys(months)) { const n = months[k].length; months[k] = months[k].filter(t => { if (t.src !== 'recurring') return true; const r = config.recurring.find(x => String(t.id).startsWith(`rec-${x.id}-`)); return !(r && paidMatch(r, t.date)); }); if (months[k].length !== n) touched.add(k); }
+  if (touched.size) { await saveMonths([...touched]); render(); }
 }
 function dueSoon() {
   const now = isoDate(today()), limit = isoDate(new Date(today().getFullYear(), today().getMonth(), today().getDate() + 14));
@@ -946,7 +960,7 @@ function billsBetween(fromExcl, toIncl, type = 'expense') {
   const out = [];
   for (const r of config.recurring) {
     if ((r.type || 'expense') !== type) continue;
-    for (let n = 0; n < 3000; n++) { const d = occurrence(r, n); if (d > toIncl) break; if (d > fromExcl && !recSkipped(r, d) && !recAdded(r, d)) out.push({ r, date: d }); }
+    for (let n = 0; n < 3000; n++) { const d = occurrence(r, n); if (d > toIncl) break; if (d > fromExcl && !recSkipped(r, d) && !recAdded(r, d) && !paidMatch(r, d)) out.push({ r, date: d }); }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -961,7 +975,7 @@ function cashNow() {
   const fresh = list.filter(x => x.at && Date.now() - x.at < 36 * 3600000);
   if (fresh.length && fresh.length === list.length) {
     const v = round2(list.reduce((a, x) => a + (x.available != null ? +x.available : +x.balance || 0), 0));
-    return { v, src: 'bank', at: Math.min(...list.map(x => x.at)) };
+    return { v, src: 'bank', at: Math.min(...list.map(x => x.at)), last: Math.max(...list.map(x => x.at)) };
   }
   const b = balanceAt(now), a = balanceAnchor(); return b == null ? null : { v: round2(b - (a ? a.cards : 0)), src: 'app' };
 }
@@ -987,13 +1001,17 @@ function forecast(opt = {}) {
     return { cash, pi, p1: parts.map(([, f]) => f.p1).sort()[0], end: parts.map(([, f]) => f.end).sort().pop(), ev, low: round2(low), lowDate, lowName, neg, billsTotal: round2(parts.reduce((a, [, f]) => a + f.billsTotal, 0)), livingTotal: round2(parts.reduce((a, [, f]) => a + (f.livingTotal || 0), 0)), living: parts.some(([, f]) => f.living) ? { weekly: round2(parts.reduce((a, [, f]) => a + (f.living ? f.living.weekly : 0), 0)) } : null, endBal: bal };
   }
   const now = isoDate(today()), cash = cashNow(); if (!cash) return null;
-  const pi = payInfo(), p1 = nextPayday(pi), p2 = addDaysIso(p1, pi.freq === 'fortnightly' ? 14 : 7);
+  // bank balances already include any pay and bills dated on or before the day they were read
+  const pi = payInfo(), step = pi.freq === 'fortnightly' ? 14 : 7, bd = cash.src === 'bank' && cash.last ? isoDate(new Date(cash.last)) : null;
+  let p1 = nextPayday(pi); if (bd && p1 <= bd) p1 = addDaysIso(p1, step);
+  const p2 = addDaysIso(p1, step);
   const end = opt.days ? addDaysIso(now, opt.days) : [p2, addDaysIso(now, 14)].sort().pop();
   const ev = billsBetween(now, end).map(b => ({ date: b.date, name: b.r.name, v: -(+b.r.amount || 0) }));
-  if (cash.src === 'bank') for (const t of txOf(now.slice(0, 7))) if (t.date === now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
+  // bills the app added after the bank balances were read have not left the bank yet
+  if (bd && bd < now) for (let k = bd.slice(0, 7); k <= now.slice(0, 7); k = addMonths(k, 1)) for (const t of txOf(k)) if (t.date > bd && t.date <= now && t.src === 'recurring' && t.type === 'expense') ev.push({ date: now, name: t.desc, v: -(+t.amount || 0) });
   const commMode = opt.comm || ui.fcComm || 'low', cs = commMode !== 'none' ? commissionStats() : null, seen = new Set();
   const commDays = new Set();
-  for (const c of commissionRows().rows) if (c.actual == null && c.payDate >= now && c.payDate <= end) { seen.add(c.payDate.slice(0, 7)); commDays.add(c.payDate); ev.push({ date: c.payDate, name: `Pay with ${monthName(c.month).name} commission`, v: c.expect, pay: true }); }
+  for (const c of commissionRows().rows) if (c.actual == null && c.payDate >= now && !(bd && c.payDate <= bd) && c.payDate <= end) { seen.add(c.payDate.slice(0, 7)); commDays.add(c.payDate); ev.push({ date: c.payDate, name: `Pay with ${monthName(c.month).name} commission`, v: c.expect, pay: true }); }
   if (pi.base) for (let d = p1; d <= end; d = addDaysIso(d, pi.freq === 'fortnightly' ? 14 : 7)) {
     if (commDays.has(d)) continue;
     if (cs && !seen.has(d.slice(0, 7)) && +d.slice(8) <= 7) { seen.add(d.slice(0, 7)); const v = commMode === 'avg' ? cs.avg : cs.low; if (v > 0) { ev.push({ date: d, name: 'Pay with commission (estimate)', v: round2(pi.base + v), pay: true }); continue; } }
@@ -1007,7 +1025,7 @@ function forecast(opt = {}) {
   let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
   for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
   const billsTotal = round2(-ev.filter(e => !e.pay && !e.living).reduce((a, e) => a + e.v, 0)), livingTotal = round2(-ev.filter(e => e.living).reduce((a, e) => a + e.v, 0));
-  return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, livingTotal, living: lc, endBal: bal };
+  return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, livingTotal, living: lc, endBal: bal, bd };
 }
 function viewSafe() {
   const f = forecast(); if (!f) return '';
@@ -1115,6 +1133,7 @@ function viewForecast() {
       <text x="2" y="${H - 2}" font-size="11" fill="var(--muted)">${esc(shortDay(now).replace(/^[^,]*,\s*/, ''))}</text><text x="${W - 2}" y="${H - 2}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(shortDay(f.end).replace(/^[^,]*,\s*/, ''))}</text>
     </svg>
     <div class="small muted num">${f.cash.src === 'bank' ? `Starts from your bank balances, ${money(f.cash.v)} available` : `Starts from the app’s balance, ${money(f.cash.v)}`}. Adds base pay of ${money0(f.pi.base)} each payday${(config.commissions || []).length ? ' and the commission you entered' : ''}, and takes out ${money(f.billsTotal)} of bills.</div>
+  ${f.bd ? `<div class="tiny muted">Your bank balances were read ${esc(prettyDay(f.bd).toLowerCase())}. Pay and bills dated up to then are already in them, so they are not counted again.</div>` : ''}
   ${f.living ? `<div class="small muted num">Also takes out ${money(f.livingTotal)} of bare-minimum living costs, ${money0(f.living.weekly)} a week, spread over each day.</div>` : ''}
   </section>
   <div class="seg" role="group" aria-label="Living costs">${seg('on', 'With living costs', livingOn() ? 'on' : 'off', 'fcliving')}${seg('off', 'Bills only', livingOn() ? 'on' : 'off', 'fcliving')}</div>
@@ -1690,7 +1709,7 @@ function scheduledBills(from, to) {
   const out = [], now = isoDate(today());
   for (const r of config.recurring) {
     if ((r.type || 'expense') !== 'expense') continue;
-    for (let n = 0; n < 3000; n++) { const d = occurrence(r, n); if (d > to) break; if (d >= from && !recSkipped(r, d)) out.push({ date: d, name: r.name, cat: r.cat, v: +r.amount || 0, done: recAdded(r, d) || d < now }); }
+    for (let n = 0; n < 3000; n++) { const d = occurrence(r, n); if (d > to) break; if (d >= from && !recSkipped(r, d)) out.push({ date: d, name: r.name, cat: r.cat, v: +r.amount || 0, done: recAdded(r, d) || d < now || !!paidMatch(r, d) }); }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || b.v - a.v);
 }
