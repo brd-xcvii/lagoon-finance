@@ -14,7 +14,7 @@
 <meta name="theme-color" content="#071A24">
 <script>
 (function(){try{
-  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6',concrete:'#D9DDDF',fizz:'#0F0F11'};
+  var SK={lagoon:'#071A24',ember:'#1A0F1F',gold:'#0E0E16',sage:'#EEF0E6',concrete:'#D9DDDF',fizz:'#0F0F11',pothos:'#F4F1E8',shortcake:'#FFF0F2'};
   var s=localStorage.getItem('lf-skin'); if(!SK[s]) s='lagoon';
   var q=new URLSearchParams(location.search).get('icon'); var ic=SK[q]?q:s;
   if(s!=='lagoon') document.documentElement.setAttribute('data-skin',s);
@@ -25,7 +25,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
 <style>
-/* Layout: one phone column, glass cards over a coloured backdrop, floating glass tab bar. Six colour themes. */
+/* Layout: one phone column, glass cards over a coloured backdrop, floating glass tab bar. Eight colour themes. */
 :root{
   color-scheme: dark;
   --bg:#071A24; --bg-2:#0B2430;
@@ -93,6 +93,29 @@
   --divider:rgba(28,38,32,.08); --track:rgba(28,38,32,.1); --field:rgba(255,255,255,.65); --field-line:rgba(28,38,32,.14);
   --grab:rgba(28,38,32,.2); --scan-line:rgba(47,93,70,.4); --shadow:rgba(60,80,60,.12);
   --b1:#A8C3A0; --b2:#E9C79B; --b3:#9FC2BE; --picker:none;
+}
+:root[data-skin="pothos"]{
+  color-scheme: light;
+  --bg:#F4F1E8; --bg-2:#FBF9F3; --fg:#1E2A1F; --muted:#4E5B4C; --faint:#7A8576;
+  --accent:#2F7A3B; --accent-ink:#FFFFFF; --accent-soft:rgba(47,122,59,.12);
+  --warn:#A8670F; --warn-soft:rgba(168,103,15,.13); --over:#B42318; --over-soft:rgba(180,35,24,.1);
+  --glass:rgba(255,255,255,.5); --glass-2:rgba(255,255,255,.78); --line:rgba(255,255,255,.78); --hi:rgba(255,255,255,.95);
+  --sheet:#F7F4EC; --sheet-bg:rgba(251,249,243,.94); --toast:rgba(255,255,255,.95); --nav:rgba(255,255,255,.66); --scrim:rgba(30,42,31,.28);
+  --divider:rgba(30,42,31,.08); --track:rgba(30,42,31,.1); --field:rgba(255,255,255,.7); --field-line:rgba(30,42,31,.15);
+  --grab:rgba(30,42,31,.2); --scan-line:rgba(47,122,59,.4); --shadow:rgba(70,60,30,.12);
+  --b1:#7FB069; --b2:#D4A373; --b3:#F2C94C; --picker:none;
+}
+:root[data-skin="shortcake"]{
+  color-scheme: light;
+  --bg:#FFF0F2; --bg-2:#FFF8F5; --fg:#3A1E26; --muted:#6B4752; --faint:#9A7680;
+  --accent:#E0425F; --accent-ink:#FFFFFF; --accent-soft:rgba(224,66,95,.12);
+  --warn:#B85C0A; --warn-soft:rgba(184,92,10,.12); --over:#A3122E; --over-soft:rgba(163,18,46,.1);
+  --good:#3F8A55; --good-soft:rgba(63,138,85,.12);
+  --glass:rgba(255,255,255,.52); --glass-2:rgba(255,255,255,.8); --line:rgba(255,255,255,.8); --hi:rgba(255,255,255,.96);
+  --sheet:#FFF4F3; --sheet-bg:rgba(255,248,245,.94); --toast:rgba(255,255,255,.95); --nav:rgba(255,255,255,.68); --scrim:rgba(58,30,38,.26);
+  --divider:rgba(58,30,38,.08); --track:rgba(58,30,38,.1); --field:rgba(255,255,255,.72); --field-line:rgba(58,30,38,.15);
+  --grab:rgba(58,30,38,.2); --scan-line:rgba(224,66,95,.4); --shadow:rgba(120,40,60,.12);
+  --b1:#F7A1B5; --b2:#FFDDB0; --b3:#F26D86; --picker:none;
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -891,7 +914,9 @@ const SKINS = [
   { id: 'gold', name: 'Midnight Gold', bg: '#0E0E16', b1: '#3B2F6B', b2: '#8A6A1F', accent: '#F5C451' },
   { id: 'sage', name: 'Sage Light', bg: '#EEF0E6', b1: '#A8C3A0', b2: '#E9C79B', accent: '#2F5D46' },
   { id: 'concrete', name: 'Concrete', bg: '#D9DDDF', b1: '#8E9FAC', b2: '#3F474F', accent: '#D6452A' },
-  { id: 'fizz', name: 'Red Fizz', bg: '#0F0F11', b1: '#C8101E', b2: '#1D3A8F', accent: '#F0202E' }
+  { id: 'fizz', name: 'Red Fizz', bg: '#0F0F11', b1: '#C8101E', b2: '#1D3A8F', accent: '#F0202E' },
+  { id: 'pothos', name: 'Pothos', bg: '#F4F1E8', b1: '#7FB069', b2: '#D4A373', accent: '#2F7A3B' },
+  { id: 'shortcake', name: 'Strawberry Shortcake', bg: '#FFF0F2', b1: '#F7A1B5', b2: '#FFDDB0', accent: '#E0425F' }
 ];
 const iconFile = id => id === 'lagoon' ? 'icon-180.png' : `icon-${id}-180.png`;
 const currentSkin = () => document.documentElement.getAttribute('data-skin') || 'lagoon';
