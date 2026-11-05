@@ -457,8 +457,17 @@ async function initStore() {
 }
 /* data fixes that run once per phone */
 function migrate() {
-  if ((+config.mig || 0) >= 2) return;
+  if ((+config.mig || 0) >= 3) return;
   const touched = new Set();
+  if ((+config.mig || 0) < 2) migrate2(touched);
+  // v3: clear out account entries made by mistake (a screen title, or a card number with no balance)
+  for (const [k, x] of Object.entries(config.accounts || {})) {
+    const empty = x.balance == null && x.available == null && x.owing == null;
+    if ((!x.last4 && /^(accounts?|overview|home)$/i.test(x.name || '')) || (empty && !x.nameSet && !x.kindSet)) delete config.accounts[k];
+  }
+  config.mig = 3; saveLocal();
+}
+function migrate2(touched) {
   if (!config.income.some(c => c.name === BORROW_CAT)) { const i = config.income.findIndex(c => c.name === 'Other'); config.income.splice(i < 0 ? config.income.length : i, 0, { name: BORROW_CAT, planned: 0 }); }
   for (const k of Object.keys(months)) {
     const n = months[k].length;
@@ -467,7 +476,6 @@ function migrate() {
     for (const t of months[k]) if (t.type === 'income' && t.cat !== 'Paycheck' && t.cat !== BORROW_CAT && lenderMatch(t.desc)) { t.cat = BORROW_CAT; touched.add(k); }
   }
   for (const r in config.rules) if (r.startsWith('i:') && LENDER_RE.test(r.slice(2))) config.rules[r] = BORROW_CAT;
-  config.mig = 2; saveLocal();
 }
 function afterLoad() {
   if (!(gotConfig && gotMonths)) return;
@@ -539,6 +547,7 @@ function suggestCat(desc, type) {
   const rules = config.rules || {}; const prefix = type === 'income' ? 'i:' : 'e:';
   const names = (type === 'income' ? config.income : config.expense).map(c => c.name);
   if (type === 'income' && lenderMatch(desc) && names.includes(BORROW_CAT)) return BORROW_CAT;
+  if (type === 'expense' && debtOf(desc) && names.includes('Debt')) return 'Debt';
   if (rules[prefix + key] && names.includes(rules[prefix + key])) return rules[prefix + key];
   for (const r in rules) { if (r.startsWith(prefix) && r.length > 4 && key.includes(r.slice(2)) && names.includes(rules[r])) return rules[r]; }
   for (const [re, cat] of (type === 'income' ? KEYWORDS_INC : KEYWORDS_EXP)) if (re.test(desc) && names.includes(cat)) return cat;
@@ -563,8 +572,18 @@ function occurrenceRaw(r, n, sy, sm, sd, f) {
   const days = { weekly: 7, fortnightly: 14, '4weekly': 28 }[f];
   if (days) return isoDate(new Date(sy, sm - 1, sd + n * days));
   const k = addMonths(`${sy}-${pad(sm)}`, n * ({ quarterly: 3, yearly: 12 }[f] || 1));
-  return `${k}-${pad(Math.min(sd, daysIn(k)))}`;
+  const d = `${k}-${pad(Math.min(sd, daysIn(k)))}`;
+  return r.bizAdj ? prevBizDay(d) : d;
 }
+/* lenders take a payment on the business day before when the date falls on a weekend or a bank holiday */
+function easterSunday(y) { const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451), mo = Math.floor((h + l - 7 * m + 114) / 31), da = ((h + l - 7 * m + 114) % 31) + 1; return new Date(y, mo - 1, da); }
+function isBankHoliday(iso) {
+  const [y, m, d] = iso.split('-').map(Number), md = `${pad(m)}-${pad(d)}`;
+  if (['01-01', '01-26', '04-25', '12-25', '12-26'].includes(md)) return true;
+  const e = easterSunday(y), at = n => isoDate(new Date(e.getFullYear(), e.getMonth(), e.getDate() + n));
+  return iso === at(-2) || iso === at(1);
+}
+function prevBizDay(iso) { let d = iso; for (let i = 0; i < 7; i++) { const wd = new Date(d + 'T00:00:00').getDay(); if (wd !== 0 && wd !== 6 && !isBankHoliday(d)) return d; d = addDaysIso(d, -1); } return iso; }
 function recSkipped(r, iso) { const s = r.skip || []; return s.includes(iso) || (recFreq(r) === 'monthly' && s.includes(iso.slice(0, 7))); }
 function recAdded(r, iso) { const ids = [`rec-${r.id}-${iso}`, `rec-${r.id}-${iso.slice(0, 7)}`]; return txOf(iso.slice(0, 7)).some(t => ids[0] === t.id || (recFreq(r) === 'monthly' && ids[1] === t.id)); }
 function nextOccurrence(r, afterIso) { for (let n = 0; n < 2000; n++) { const d = occurrence(r, n); if (d === '9999-12-31') return null; if (d > afterIso && !recSkipped(r, d)) return d; } return null; }
@@ -1240,10 +1259,17 @@ function weekWarning(cat) {
 
 /* debts: balances move with the payments and advances found in your transactions */
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function debtRe(d) { const w = String(d.match || d.name || '').split(',').map(x => x.trim()).filter(Boolean); return w.length ? new RegExp(w.map(escRe).join('|'), 'i') : null; }
+function debtRe(d) { const w = String(d.match || d.name || '').split(',').map(x => x.trim()).filter(Boolean); return w.length ? new RegExp(w.map(x => x.length <= 3 ? `\\b${escRe(x)}\\b` : escRe(x)).join('|'), 'i') : null; }
+/* does a bank description belong to a debt? */
+const debtOf = desc => (config.debts || []).find(d => { const re = debtRe(d); return re && re.test(desc || ''); });
+/* the debt a bank line pays. When several debts share a lender (two Credit Corp loans), the nearest repayment amount wins. */
+function debtFor(t) {
+  const c = (config.debts || []).filter(d => { const re = debtRe(d); return re && re.test(t.desc || '') && (!d.owner || !t.owner || t.owner === d.owner); });
+  return c.length < 2 ? c[0] || null : c.sort((a, b) => Math.abs((+a.repay || 0) - (+t.amount || 0)) - Math.abs((+b.repay || 0) - (+t.amount || 0)))[0];
+}
 function debtFlows(d) {
   const re = debtRe(d) || /^\b$/;
-  return allTx().filter(t => (!d.owner || !t.owner || t.owner === d.owner)).filter(t => t.debtId === d.id || (!t.debtId && re.test(t.desc)) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
+  return allTx().filter(t => (!d.owner || !t.owner || t.owner === d.owner)).filter(t => t.debtId === d.id || (!t.debtId && re.test(t.desc) && debtFor(t) === d) && (t.type === 'expense' ? t.cat === 'Debt' || t.cat === d.cat || !d.cat : true)).map(t => ({ date: t.date, v: t.type === 'expense' ? -(+t.amount || 0) : (+t.amount || 0), t }));
 }
 /* a flow counts after the balance date; an extra payment logged on that day counts if logged after the balance was set */
 const afterAsOf = (d, f) => f.date > d.asOf || (f.date === d.asOf && f.t.debtId === d.id && (+f.t.at || 0) > (+d.setAt || 0));
@@ -1316,8 +1342,22 @@ async function saveExtra() {
   const r = debtRows().find(x => x.id === d.id);
   toast(`Logged. ${d.name} paid off ${r.payoff}${r.sooner > 0 ? `, ${r.sooner} weeks sooner` : ''}.`);
 }
+/* money from a lender that is not in the debts yet: recent income that reads like a loan */
+const LOANISH = /financ|lend|loan|advance|disb|payday|cash ?train|buy ?now/i;
+function lenderHints() {
+  const skip = new Set(config.lenderSkip || []), from = addDaysIso(isoDate(today()), -60), seen = new Set(), out = [];
+  for (const t of allTx()) {
+    if (t.type !== 'income' || t.date < from || !(+t.amount >= 200) || t.cat === 'Paycheck') continue;
+    const d = String(t.desc || ''); if (!LOANISH.test(d) || /salary|wages?|refund|interest/i.test(d) || lenderMatch(d)) continue;
+    const name = d.replace(/^(fast )?(transfer from|direct credit|osko payment from)\s*/i, '').split(/\s+/).filter(w => !/\d/.test(w) && !/^(pty|ltd|loan|disbursement|for|ct\.?)$/i.test(w)).slice(0, 2).join(' ').replace(/\b\w/g, c => c.toUpperCase()) || 'New lender';
+    const key = name.toLowerCase(); if (skip.has(key) || seen.has(key)) continue; seen.add(key);
+    out.push({ key, name, amount: round2(+t.amount), date: t.date });
+  }
+  return out;
+}
 function viewDebts() {
   const rows = debtRows(), now = isoDate(today());
+  const hints = lenderHints(), hintCard = hints.length ? `<section class="glass card" aria-label="New borrowing" style="gap:8px"><div class="h2">Looks like new borrowing</div>${hints.map(h => `<div class="row between" style="gap:8px"><div style="min-width:0"><div style="font-weight:600;overflow-wrap:anywhere">${esc(h.name)}</div><div class="tiny muted num">${money(h.amount)} arrived ${esc(shortDate(h.date))}</div></div><div class="row" style="gap:6px"><button type="button" class="btn primary" data-act="hintadd" data-i="${esc(h.key)}">Add debt</button><button type="button" class="btn" data-act="hintskip" data-i="${esc(h.key)}">Not a debt</button></div></div>`).join('')}<div class="tiny muted">Money from a lender that is not in your debts yet.</div></section>` : '';
   const total = round2(rows.reduce((a, r) => a + r.bal, 0)), weekly = round2(rows.reduce((a, r) => a + (r.bal > 0 ? r.weekly : 0), 0));
   const inDebts = x => (config.debts || []).some(d => { const re = debtRe(d); return (re && re.test(x.name || '')) || (d.name || '').toLowerCase() === (x.name || '').toLowerCase(); });
   const cardAdj = round2(Object.values(config.accounts || {}).filter(x => isCardAcct(x) && x.balance != null).reduce((a, x) => a + (cardTracked(x) ? (inDebts(x) ? +x.balance : 0) : (inDebts(x) ? 0 : -(+x.balance || 0))), 0)), cash0 = balanceAt(now), cash = cash0 == null ? null : round2(cash0 - cardAdj), nw = cash == null ? null : round2(cash - total);
@@ -1334,7 +1374,7 @@ function viewDebts() {
     ${extraAll > 0 ? `<span class="chip num" style="align-self:flex-start">Extra paid ${money0(extraAll)}</span>` : ''}
     <div style="display:flex;flex-direction:column;gap:6px">${dated.map(r => `<div class="row between small"><span>${esc(r.name)}</span><span class="muted num">${esc(r.payoff)}${r.sooner > 0 ? ` <span style="color:var(--good)">(${r.sooner} wk sooner)</span>` : ''}</span></div>`).join('')}</div>
     <div class="tiny muted">Dates count interest only where you set a rate.</div></section>` : '';
-  return `${freeCard}<section class="glass card" aria-label="Net worth">
+  return `${hintCard}${freeCard}<section class="glass card" aria-label="Net worth">
     <div class="small muted" style="font-weight:600">Net worth: your money minus your debts</div>
     <div class="big num" style="color:${nw != null && nw < 0 ? 'var(--over)' : 'var(--fg)'}">${nw == null ? '—' : (nw < 0 ? '−' : '') + money(Math.abs(nw))}</div>
     <div class="row" style="flex-wrap:wrap"><span class="chip num">Debts ${money0(total)}</span><span class="chip num">Repayments ${money0(weekly)} a week</span>${change != null ? `<span class="chip ${change < 0 ? 'over' : ''} num">${change >= 0 ? '+' : '−'}${money0(Math.abs(change))} in 12 months</span>` : ''}</div>
@@ -1351,17 +1391,17 @@ function viewDebts() {
     : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">No debts added</div><div class="small">Add each loan or advance with today’s balance. The app follows your repayments from there.</div></div>`}
   <button type="button" class="btn block" data-act="debtedit">Add a debt</button>`;
 }
-function openDebt(id) {
+function openDebt(id, pre) {
   const d = id ? (config.debts || []).find(x => x.id === id) : null, now = isoDate(today());
-  const cur = d ? debtBalanceAt(d, now) : '';
+  const cur = d ? debtBalanceAt(d, now) : pre ? pre.amount : '';
   openSheet(`${sheetHead(d ? 'Edit debt' : 'Add a debt')}
-  <div class="field"><label for="d-name">Name</label><input class="input" id="d-name" value="${esc(d ? d.name : '')}" placeholder="Car loan, pay advance"></div>
+  <div class="field"><label for="d-name">Name</label><input class="input" id="d-name" value="${esc(d ? d.name : pre ? pre.name : '')}" placeholder="Car loan, pay advance"></div>
   <div class="grid2"><div class="field"><label for="d-bal">Balance today</label><input class="input num" id="d-bal" inputmode="decimal" value="${esc(cur)}"></div>
   <div class="field"><label for="d-kind">Type</label><select class="input" id="d-kind"><option value="loan" ${!d || d.kind !== 'advance' ? 'selected' : ''}>Loan</option><option value="advance" ${d && d.kind === 'advance' ? 'selected' : ''}>Pay advance</option></select></div></div>
   <div class="grid2"><div class="field"><label for="d-repay">Repayment</label><input class="input num" id="d-repay" inputmode="decimal" value="${esc(d ? d.repay : '')}"></div>
   <div class="field"><label for="d-freq">How often</label><select class="input" id="d-freq">${FREQS.map(([k, l]) => `<option value="${k}" ${(d ? d.freq : 'weekly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
   <div class="field"><label for="d-rate">Interest rate (% a year)</label><input class="input num" id="d-rate" inputmode="decimal" value="${esc(d && d.rate ? d.rate : '')}" placeholder="0"></div>
-  <div class="field"><label for="d-match">Words in the bank description</label><input class="input" id="d-match" value="${esc(d ? d.match : '')}" placeholder="Lender name"></div>
+  <div class="field"><label for="d-match">Words in the bank description</label><input class="input" id="d-match" value="${esc(d ? d.match : pre ? pre.name : '')}" placeholder="Lender name"></div>
   <div class="note">Separate several with commas. The app uses them to find repayments and new advances.</div>
   <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
   <button type="button" class="btn primary block" data-act="debtsave">${d ? 'Save' : 'Add debt'}</button>
@@ -1372,7 +1412,12 @@ async function saveDebt() {
   if (!name || !isFinite(bal)) { const e = $('formErr'); e.hidden = false; e.textContent = !name ? 'Enter a name.' : 'Enter the balance.'; return; }
   const rec = { name, balance: round2(bal), asOf: isoDate(today()), setAt: Date.now(), repay: round2(repay), freq: $('d-freq').value, match: $('d-match').value.trim() || name, kind: $('d-kind').value, rate: Math.abs(parseMoney($('d-rate').value)) || 0 };
   config.debts = config.debts || [];
-  if (sheetCtx.id) Object.assign(config.debts.find(x => x.id === sheetCtx.id), rec); else config.debts.push({ id: uid(), ...rec });
+  if (sheetCtx.id) Object.assign(config.debts.find(x => x.id === sheetCtx.id), rec);
+  else {
+    const nd = { id: uid(), ...rec }; config.debts.push(nd);
+    // money from this lender is borrowing, and its repayments are Debt
+    const re = debtRe(nd); if (re) for (const k of Object.keys(months)) for (const t of months[k]) if (re.test(t.desc || '')) { if (t.type === 'income' && t.cat !== 'Paycheck') t.cat = BORROW_CAT; else if (t.type === 'expense') t.cat = 'Debt'; }
+  }
   closeSheet(); ui.tab = 'plan'; ui.planTab = 'debts'; render(); await saveConfig(); toast('Debt saved');
 }
 /* debts file: columns Name, Balance, As of, Repayment, Frequency, Match, Type */
@@ -1406,6 +1451,33 @@ function tsvLines(tsv) {
   }
   return [...map.values()];
 }
+/* the Accounts overview lists every account: name, number, available amount and balance */
+function isAccountList(tsv) {
+  const lines = tsvLines(tsv).map(ws => ws.map(w => w.text).join(' ')), t = lines.join('\n');
+  if (lines.some(l => SHOT_DATE.test(l))) return false;
+  return (t.match(/^available\b/gim) || []).length >= 2 || (/\boverview\b/i.test(t) && /\binsights\b/i.test(t) && /^balance\b/im.test(t));
+}
+function parseAccountList(tsv, W) {
+  const ws = tsvLines(tsv).flat().filter(w => w.x0 >= W * 0.13 && (w.y1 - w.y0) < 60).sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1)), rows = [];  // icons at the left are not text
+  for (const w of ws) {
+    const cy = (w.y0 + w.y1) / 2, h = w.y1 - w.y0, r = rows.find(r => Math.abs(r.cy - cy) < Math.max(r.h, h) * 0.55);
+    if (r) { r.cy = (r.cy * r.w.length + cy) / (r.w.length + 1); r.w.push(w); r.h = Math.max(r.h, h); } else rows.push({ cy, h, w: [w] });
+  }
+  const out = []; let name = '', cur = null;
+  for (const r of rows.sort((a, b) => a.cy - b.cy)) {
+    const left = r.w.filter(x => x.x0 >= W * 0.13 && x.x0 < W * 0.6).sort((a, b) => a.x0 - b.x0), right = r.w.filter(x => x.x0 >= W * 0.5 && /[\d$]/.test(x.text)).sort((a, b) => a.x0 - b.x0);
+    const text = left.map(x => x.text).join(' ').trim(), money = right.map(x => x.text).join('').replace(/\s+/g, ''), val = SHOT_MONEY.test(money) ? shotMoney(money) : null;
+    if (/^available\b/i.test(text)) { if (cur) cur.available = val; continue; }
+    if (/^balance\b/i.test(text)) { if (cur) { cur.balance = val; out.push(cur); cur = null; } continue; }
+    if (/^total\b/i.test(text)) { cur = null; continue; }
+    if (/^[\d\s-]{7,}$/.test(text)) { if (name) cur = { name, digits: text.replace(/\D/g, '') }; continue; }
+    if ((text.match(/[a-z]/gi) || []).length >= 4 && !/^(overview|insights|accounts?)\b/i.test(text)) name = text.replace(/[^A-Za-z0-9 &'-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  return out.filter(c => c.balance != null).map(c => {
+    const d = c.digits, kind = /loan/i.test(c.name) ? 'loan' : /shares|commsec|invest/i.test(c.name) ? 'invest' : (d.length >= 15 || /\bcard\b|neo|credit|mastercard|visa|interest-?free|low fee|ifnf/i.test(c.name)) ? 'card' : '';
+    return { name: c.name, last4: d.slice(-4), balance: c.balance, available: c.available != null ? c.available : null, kind };
+  });
+}
 function parseBankShot(tsv, W, todayIso) {
   const words = tsvLines(tsv);
   const L = [], amts = [], moneyWords = [];
@@ -1434,10 +1506,12 @@ function parseBankShot(tsv, W, todayIso) {
   // header: account name, number and balances
   const acc = { name: '', last4: '', balance: null, available: null, pending: null, kind: '', owing: null, due: '' };
   const nextMoney = i => { const m = /-?\$[\d,]+\.\d{2}/.exec(String(full[i + 1] || '').replace(/\s+/g, '')); return m ? shotMoney(m[0]) : null; };
-  const full = allLines.map(l => l.text);
+  // the account details sit above the first date heading; a "Card xx1234" inside a transaction is not the account
+  const firstDated = L.find(l => SHOT_DATE.test(l.all)), headEnd = firstDated ? firstDated.y0 - 1 : Infinity;
+  const full = allLines.filter(l => l.y0 < headEnd).map(l => l.text);
   for (let i = 0; i < full.length; i++) {
     const t = full[i];
-    let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{6}\s*(\d{4})\b/.exec(t) || /(?:ending(?:\s+in)?|card\s*(?:no\.?|number)?|xx|[\u2022*]{2,})\s*(\d{4})\b/i.exec(t); if (m && !acc.last4) acc.last4 = m[1];
+    let m = /account\s*(?:no\.?|number)?\s*[:#]?\s*\d{3,4}\s*(\d{4})\b/i.exec(t) || /\b\d{3}-?\d{3}\s+[\d ]*?(\d{4})\s*$/.exec(t) || /\b(?:\d{4}\s+){3}(\d{4})\s*$/.exec(t) || /^[^a-z0-9]*(?:ending(?:\s+in)?|card\s*(?:no\.?|number)?|xx|[\u2022*]{2,})\s*(\d{4})\b/i.exec(t); if (m && !acc.last4) acc.last4 = m[1];
     m = /^balance\s*(-?\$[\d,]+\.\d{2})/i.exec(t.replace(/\s+/g, ' ')); if (m && acc.balance == null) acc.balance = shotMoney(m[1]);
     m = /^pending\s*(-?\$[\d,]+\.\d{2})/i.exec(t); if (m && acc.pending == null) acc.pending = shotMoney(m[1]);
     if (/^balance$/i.test(t.trim()) && acc.balance == null) acc.balance = nextMoney(i);
@@ -1524,7 +1598,7 @@ async function readShots(files) {
       if (status) status.textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
       const { color, gray } = await prepColor(files[i]);
       const { data } = await worker.recognize(gray);
-      const r = parseBankShot(data.tsv || '', gray.width, isoDate(today()));
+      const r = isAccountList(data.tsv || '') ? { account: { name: '', last4: '', balance: null, available: null }, items: [], list: parseAccountList(data.tsv || '', gray.width) } : parseBankShot(data.tsv || '', gray.width, isoDate(today()));
       for (const it of r.items) it.type = it.minus ? 'expense' : isGreen(color, it.box) ? 'income' : INCOME_WORDS.test(it.desc) ? 'income' : 'expense';
       results.push(r);
     }
@@ -1534,32 +1608,56 @@ async function readShots(files) {
 }
 function openShotImport(results) {
   const isDup = dupChecker(), all = allTx(), seen = new Set(), items = [];
-  const accounts = []; let last = null, skipped = 0;
-  for (const r of results) {
-    const a = r.account; if (a.last4 || a.balance != null || a.available != null) { last = a; if (!accounts.some(x => x.last4 === a.last4 && x.name === a.name)) accounts.push(a); }
+  const accounts = [], moves = []; let last = null, skipped = 0, reversed = 0;
+  const simil = (a, b) => { a = a.toLowerCase().replace(/[^a-z0-9]/g, ''); b = b.toLowerCase().replace(/[^a-z0-9]/g, ''); if (!a || !b) return 0; if (a.includes(b) || b.includes(a)) return 1; const m = a.length, n = b.length; let p = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const c = [i]; for (let j = 1; j <= n; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = c; } return 1 - p[n] / Math.max(m, n); };
+  results.forEach((r, ri) => {
+    const a = r.account;
+    for (const x of r.list || []) if ((x.last4 || x.name) && !accounts.some(y => y.last4 === x.last4 && y.name === x.name)) accounts.push(x);
+    if (!r.list && (a.last4 || a.balance != null || a.available != null) && !(!a.last4 && /^(accounts?|overview|home)$/i.test(a.name))) { last = a; if (!accounts.some(x => x.last4 === a.last4 && x.name === a.name)) accounts.push(a); }
     for (const it of r.items) {
       const k = `${it.date}|${it.amount.toFixed(2)}|${it.desc.toLowerCase()}`; if (seen.has(k)) continue; seen.add(k);
-      if (OWN_MOVE.test(it.desc)) { skipped++; continue; }
+      if (OWN_MOVE.test(it.desc)) { skipped++; const m = /\bxx\s?(\d{4})\b/i.exec(it.desc); moves.push({ date: it.date, amount: it.amount, type: it.type, last4: m ? m[1] : (/^payment received/i.test(it.desc) && last ? last.last4 : '') }); continue; }
+      // the same line seen in two screenshots, read a little differently each time
+      if (items.some(o => o.ri !== ri && o.date === it.date && o.type === it.type && Math.abs(o.amount - it.amount) < 0.005 && simil(o.desc, it.desc) >= 0.6)) { skipped++; continue; }
+      // a returned direct debit cancels the payment it reverses
+      const rev = it.type === 'income' && /^return\b/i.test(it.desc) ? all.find(t => t.type === 'expense' && Math.abs((+t.amount || 0) - it.amount) < 0.005 && dayDiff(t.date, it.date) >= 0 && dayDiff(t.date, it.date) <= 10 && simil(t.desc, it.desc.replace(/^return\s+[\d\/]+\s*(direct debit\s*)?/i, '')) >= 0.5) : null;
+      if (rev) { items.push({ ...it, ri, dup: false, reverses: rev.id, cat: 'Debt', acct: (last && last.last4) || '' }); reversed++; continue; }
       const near = all.find(t => t.type === it.type && t.src !== 'recurring' && Math.abs((+t.amount || 0) - it.amount) < 0.005 && Math.abs(dayDiff(t.date, it.date)) <= 3);
       const dup = isDup(it.date, it.amount, it.desc, it.type) || !!near;
-      const bill = dup ? null : isDup.billFor(it.date, it.amount, it.type);
+      const bill = dup ? null : isDup.billFor(it.date, it.amount, it.type, it.desc);
       const fallback = it.type === 'expense' && config.expense.some(c => c.name === it.bankCat) ? it.bankCat : 'Other';
-      items.push({ ...it, dup, clears: near && near.pending && !it.pending ? near.id : '', takes: bill ? bill.id : '', cat: bill ? bill.cat : (suggestCat(it.desc, it.type) || fallback), acct: (last && last.last4) || '' });
+      items.push({ ...it, ri, dup, clears: near && near.pending && !it.pending ? near.id : '', takes: bill ? bill.id : '', ...(bill && !simil(bill.desc, it.desc) && /^[^\s\d]{4,12}$/.test(it.desc) ? { desc: bill.desc } : {}), cat: bill ? bill.cat : (suggestCat(it.desc, it.type) || fallback), acct: (last && last.last4) || '' });
     }
-  }
-  const fresh = items.filter(t => !t.dup);
+  });
+  const fresh = items.filter(t => !t.dup && !t.reverses), cancels = items.filter(t => t.reverses);
   openSheet(`${sheetHead('From your screenshots')}
   ${accounts.length ? `<div style="display:flex;flex-direction:column;gap:6px">${accounts.map(a => `<div class="row between small"><span style="font-weight:600">${esc(a.name || 'Account')}${a.last4 ? ' ••' + esc(a.last4) : ''}</span><span class="num">${a.balance != null ? money(a.balance) : ''}${a.available != null ? ` <span class="muted">(${money(a.available)} available)</span>` : ''}</span></div>`).join('')}</div>` : '<div class="note">No account balance found. Include the top of the account screen to update balances.</div>'}
-  <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length} already in the app${skipped ? ` · ${skipped} transfers between your accounts skipped` : ''}</span></div>
+  <div class="small"><strong class="num">${fresh.length}</strong> new · <span class="muted num">${items.length - fresh.length - cancels.length} already in the app${skipped ? ` · ${skipped} transfers or repeats skipped` : ''}${cancels.length ? ` · ${cancels.length} returned payment${cancels.length === 1 ? '' : 's'} cancelled` : ''}</span></div>
   <div class="preview">${fresh.map(t => `<div class="tx" style="padding:8px 10px"><span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(t.date)}${t.pending ? ' · Pending' : ''}</div></span><span class="amt num ${t.type === 'income' ? 'in' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('') || '<div class="note" style="padding:12px">No new transactions.</div>'}</div>
   <div class="note">Check the amounts against your screenshots. You can fix any later and the app learns the store.</div>
-  <button type="button" class="btn primary block" data-act="shotgo" ${fresh.length || accounts.length ? '' : 'disabled'}>${fresh.length ? `Add ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}` : 'Save'}${accounts.length ? ' and update balances' : ''}</button>`, { kind: 'shotimport', items, accounts });
+  <button type="button" class="btn primary block" data-act="shotgo" ${fresh.length || accounts.length || cancels.length ? '' : 'disabled'}>${fresh.length ? `Add ${fresh.length} transaction${fresh.length === 1 ? '' : 's'}` : 'Save'}${accounts.length ? ' and update balances' : ''}</button>`, { kind: 'shotimport', items, accounts, moves });
 }
 async function runShotImport() {
-  const ctx = sheetCtx, touched = new Set();
+  const ctx = sheetCtx, touched = new Set(), todayIso = isoDate(today());
   config.accounts = config.accounts || {};
-  for (const a of ctx.accounts) { const k = a.last4 || a.name, old = config.accounts[k] || {}; config.accounts[k] = { ...old, name: old.nameSet ? old.name : (a.name || old.name || 'Account'), last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), ...(a.kind && !old.kindSet ? { kind: a.kind } : {}), ...(a.owing != null ? { owing: a.owing } : {}), ...(a.due ? { due: a.due } : {}), at: Date.now() }; }
-  const fresh = ctx.items.filter(t => !t.dup);
+  for (const a of ctx.accounts) {
+    if (a.kind === 'invest') continue;
+    // a loan in the account list updates the matching debt, it is not an account
+    if (a.kind === 'loan') { const d = debtOf(a.name) || (config.debts || []).find(x => (x.name || '').toLowerCase().includes((a.name || '').toLowerCase())); if (d && a.balance != null) { d.balance = round2(Math.abs(a.balance)); d.asOf = todayIso; d.setAt = Date.now(); } continue; }
+    // an older entry kept by name only joins the one that has the account number
+    if (a.last4) for (const [k0, v] of Object.entries(config.accounts)) if (k0 !== a.last4 && !v.last4 && (v.name || '').toLowerCase() === (a.name || '').toLowerCase()) { config.accounts[a.last4] = { ...(config.accounts[a.last4] || {}), ...v, last4: a.last4 }; delete config.accounts[k0]; }
+    const k = a.last4 || a.name, old = config.accounts[k] || {};
+    config.accounts[k] = { ...old, name: old.nameSet ? old.name : (a.name || old.name || 'Account'), last4: a.last4, ...(a.balance != null ? { balance: a.balance } : {}), ...(a.available != null ? { available: a.available } : {}), ...(a.kind && !old.kindSet ? { kind: a.kind } : {}), ...(a.owing != null ? { owing: a.owing } : {}), ...(a.due ? { due: a.due, dueSeen: Date.now() } : {}), at: Date.now() };
+  }
+  // money paid onto a card: remember the latest, so a paid card is not shown as overdue
+  for (const m of ctx.moves || []) { const x = m.last4 && config.accounts[m.last4]; if (x && isCardAcct(x) && (!x.paid || x.paid.date <= m.date)) x.paid = { date: m.date, amount: m.amount }; }
+  // a returned payment cancels the payment it reverses (and stops the bill adding it again)
+  for (const t of ctx.items.filter(t => t.reverses)) for (const k of Object.keys(months)) {
+    const o = months[k].find(x => x.id === t.reverses); if (!o) continue;
+    months[k] = months[k].filter(x => x !== o); touched.add(k);
+    const r = config.recurring.find(x => String(o.id).startsWith(`rec-${x.id}-`)); if (r) (r.skip = r.skip || []).push(o.date);
+  }
+  const fresh = ctx.items.filter(t => !t.dup && !t.reverses);
   for (const t of ctx.items) if (t.dup && t.clears) { const o = allTx().find(x => x.id === t.clears); if (o) { o.pending = false; touched.add(o.date.slice(0, 7)); } }
   if (fresh.length) {
     const dates = fresh.map(t => t.date).sort();
@@ -1585,6 +1683,15 @@ function openAcct(k) {
   <button type="button" class="btn primary block" data-act="acctsave">Save</button>
   <button type="button" class="btn danger block" data-act="acctdel">Remove account</button>`, { kind: 'acct', k });
 }
+/* a card shows as overdue only when a read after the due date still showed it unpaid. A paid card clears itself. */
+function cardDueLine(x) {
+  if (!isCardAcct(x) || !x.due || !(+x.owing > 0) || x.paidDue === x.due) return '';
+  const now = isoDate(today());
+  if (x.due >= now) return `<div class="tiny muted">${money(x.owing)} due ${esc(shortDay(x.due))}</div>`;
+  const p = x.paid; if (p && p.date >= addDaysIso(x.due, -35) && +p.amount >= +x.owing - 0.5) return '';
+  const late = !!x.dueSeen && isoDate(new Date(x.dueSeen)) > x.due;
+  return `<div class="tiny" style="${late ? 'color:var(--over);font-weight:700' : 'color:var(--muted)'}">${money(x.owing)} ${late ? 'overdue since' : 'was due'} ${esc(shortDay(x.due))} <button type="button" class="link" style="font:inherit" data-act="cardpaid" data-k="${esc(acctKey(x))}">Mark paid</button></div>`;
+}
 function viewAccounts() {
   const list = Object.values(config.accounts || {}); if (!list.length) return '';
   const avOf = x => x.available != null ? +x.available : (+x.balance || 0);
@@ -1592,7 +1699,7 @@ function viewAccounts() {
   const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${Math.max(1, m)} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   return `<section class="glass card" aria-label="Accounts">
     <div class="row between"><div class="h2">Accounts</div>${isHH() ? '' : '<button type="button" class="link" data-act="shots">Update</button>'}</div>
-    ${list.sort((a, b) => avOf(b) - avOf(a)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.balance || 0) + ' balance · ' : ''}${x.at ? ago(x.at) : ''}</div>${x.due && x.owing ? (x.due < isoDate(today()) ? `<div class="tiny" style="color:var(--over);font-weight:700">${money(x.owing)} overdue since ${esc(shortDay(x.due))}</div>` : `<div class="tiny muted">${money(x.owing)} due ${esc(shortDay(x.due))}</div>`) : ''}</div><div class="num" style="font-weight:700;color:${avOf(x) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(avOf(x))}</div></div>`).join('')}
+    ${list.sort((a, b) => avOf(b) - avOf(a)).map(x => `<div class="row between" style="gap:8px;cursor:pointer" data-act="acctedit" data-k="${esc(x.last4 || x.name)}"><div style="min-width:0"><div style="font-weight:600">${esc(x.name)}${x.last4 ? ` <span class="muted">••${esc(x.last4)}</span>` : ''}</div><div class="tiny muted">${isCardAcct(x) ? 'Card · ' : x.count === false ? 'Not counted · ' : ''}${x.available != null ? money(x.balance || 0) + ' balance · ' : ''}${x.at ? ago(x.at) : ''}</div>${cardDueLine(x)}</div><div class="num" style="font-weight:700;color:${avOf(x) < 0 ? 'var(--over)' : 'var(--fg)'}">${money(avOf(x))}</div></div>`).join('')}
     <div class="row between small" style="border-top:1px solid var(--divider);padding-top:8px"><span class="muted">Total available in bank accounts</span><span class="num" style="font-weight:700">${money(avail)}${avail !== total ? ` <span class="muted">(${money(total)} balance)</span>` : ''}</span></div></section>`;
 }
 
@@ -2222,6 +2329,7 @@ function openRecurring(editId) {
   <div class="field"><label for="r-freq">Repeats</label><select class="input" id="r-freq">${FREQS.map(([v, l]) => `<option value="${v}" ${v === t.freq ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
   <div class="grid2"><div class="field"><label for="r-end">Last date (optional)</label><input class="input" id="r-end" type="date" value="${esc(t.endDate || '')}"></div>
   <div class="field"><label for="r-times">Or number of payments</label><input class="input num" id="r-times" inputmode="numeric" value="${esc(t.times || '')}" placeholder="No limit"></div></div>
+  <label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="r-biz" ${t.bizAdj ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Pay the business day before a weekend or bank holiday</span></label>
   <div class="note" id="r-preview"></div>
   <div class="note" id="formErr" role="alert" style="color:var(--over)" hidden></div>
   <button type="button" class="btn primary block" data-act="recsave">${r ? 'Save changes' : 'Add recurring item'}</button>
@@ -2232,7 +2340,7 @@ function openRecurring(editId) {
 function recPreview() {
   const el = $('r-preview'), s = $('r-start') && $('r-start').value; if (!el) return;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) { el.textContent = ''; return; }
-  const tmp = { startDate: s, freq: $('r-freq').value, endDate: ($('r-end') || {}).value || '', times: +(($('r-times') || {}).value || 0) };
+  const tmp = { startDate: s, freq: $('r-freq').value, endDate: ($('r-end') || {}).value || '', times: +(($('r-times') || {}).value || 0), bizAdj: !!($('r-biz') || {}).checked };
   const ds = [0, 1, 2].map(n => occurrence(tmp, n)).filter(d => d !== '9999-12-31').map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }));
   const last = recLast(tmp);
   el.textContent = `Dates: ${ds.join(', ')}${last ? `. Last one ${shortDate(last)}.` : ' and so on.'}`;
@@ -2241,12 +2349,12 @@ function recPreview() {
 function recLast(r) { if (!(r.endDate || +r.times > 0) || recFreq(r) === 'once') return ''; let last = ''; for (let n = 0; n < 2000; n++) { const d = occurrence(r, n); if (d === '9999-12-31') break; last = d; } return last; }
 async function saveRecurring() {
   const endDate = $('r-end').value || '', times = Math.max(0, parseInt($('r-times').value, 10) || 0);
-  const name = $('r-name').value.trim(), amount = Math.abs(parseMoney($('r-amount').value)), cat = $('f-cat').value, startDate = $('r-start').value, freq = $('r-freq').value;
+  const name = $('r-name').value.trim(), amount = Math.abs(parseMoney($('r-amount').value)), cat = $('f-cat').value, startDate = $('r-start').value, freq = $('r-freq').value, bizAdj = !!$('r-biz').checked;
   const problem = !name ? 'Enter a name.' : !(amount > 0) ? 'Enter an amount above $0.' : !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ? 'Pick the first date.' : !cat ? 'Choose a category.' : '';
   if (problem) { const e = $('formErr'); e.hidden = false; e.textContent = problem; return; }
   const ctx = sheetCtx;
-  if (ctx.id) { const x = config.recurring.find(y => y.id === ctx.id); Object.assign(x, { name, amount: round2(amount), cat, startDate, freq, type: ctx.type, endDate, times }); delete x.day; delete x.start; }
-  else config.recurring.push({ id: uid(), name, amount: round2(amount), cat, startDate, freq, type: ctx.type, endDate, times, skip: [] });
+  if (ctx.id) { const x = config.recurring.find(y => y.id === ctx.id); Object.assign(x, { name, amount: round2(amount), cat, startDate, freq, type: ctx.type, endDate, times, bizAdj }); delete x.day; delete x.start; }
+  else config.recurring.push({ id: uid(), name, amount: round2(amount), cat, startDate, freq, type: ctx.type, endDate, times, bizAdj, skip: [] });
   await saveConfig(); await applyRecurring(); openRecurring(); render(); toast('Recurring item saved');
 }
 async function deleteRecurring(btn) {
@@ -2446,12 +2554,17 @@ function dupChecker() {
   };
   /* a recurring bill this bank line pays: same type, within 4 days, amount within 10% (bills like power vary) */
   const taken = new Set();
-  fn.billFor = (date, amount, type) => {
+  /* the bank line has to name the bill or its lender. A garbled one-word line (the reader can mangle a name) may only take an exact amount. */
+  const named = (billName, desc) => { const low = String(desc || '').toLowerCase(), ws = billWords(billName); if (ws.some(w => low.includes(w))) return true; return (config.debts || []).some(d => { const re = debtRe(d); return re && re.test(billName) && re.test(desc || ''); }); };
+  const garbled = desc => /^[^\s\d]{4,12}$/.test(String(desc || '').trim());
+  fn.billFor = (date, amount, type, desc) => {
     let best = null, bd = 99;
     for (const t of recs) {
       if (taken.has(t.id) || t.type !== type) continue;
       const d = Math.abs(days(t.date, date)), a = +t.amount || 0;
-      if (d <= 4 && Math.abs(a - amount) <= Math.max(1, a * 0.1) && d < bd) { best = t; bd = d; }
+      if (d > 4 || d >= bd) continue;
+      const ok = named(t.desc, desc) ? Math.abs(a - amount) <= Math.max(1, a * 0.1) : (garbled(desc) && t.cat === 'Debt' && Math.abs(a - amount) < 0.005);
+      if (ok) { best = t; bd = d; }
     }
     if (best) taken.add(best.id);
     return best;
@@ -2459,7 +2572,7 @@ function dupChecker() {
   return fn;
 }
 /* CommBank shows your own accounts as xx1234, so these lines are money moving between your accounts, not income or spending */
-const OWN_MOVE = /^(fast )?transfer (to|from) xx\d{4}\b|^payment received,? thank you|^repayment\/payment$/i;
+const OWN_MOVE = /^(fast )?[ti]r?ans\w{0,3}er\s+(to|from|trom)\s+xx\s?\w{2,5}\b|^payment received,? thank you|^repayment\/payment$/i;
 function importRows(ctx) {
   const isDup = dupChecker();
   ctx.skippedOwn = 0;
@@ -2479,7 +2592,7 @@ function importRows(ctx) {
     const fc = m.cat >= 0 ? fileCat(r[m.cat], type) : { cat: '', isNew: false };
     const cat = fc.cat || suggestCat(desc, type) || 'Other';
     const dup = isDup(date, amount, desc, type);
-    const bill = dup ? null : isDup.billFor(date, amount, type);
+    const bill = dup ? null : isDup.billFor(date, amount, type, desc);
     out.push({ id: uid() + out.length, date, amount, desc, cat: bill && !fc.cat ? bill.cat : cat, type, src: 'import', dup, fromFile: !!fc.cat, newCat: fc.isNew, takes: bill ? bill.id : '' });
   }
   return out;
@@ -2998,6 +3111,9 @@ document.addEventListener('click', async e => {
     case 'move': { const key = el.dataset.kind === 'home' ? 'homeOrder' : 'planOrder', list = ordered(el.dataset.kind === 'home' ? HOME_SECTIONS : PLAN_TABS, config[key]).map(x => x[0]), i = list.indexOf(el.dataset.id), j = i + +el.dataset.d; if (j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; config[key] = list; openArrange(); render(); await saveConfig(); break; }
     case 'arrangereset': config.homeOrder = []; config.planOrder = []; config.homeHidden = []; openArrange(); render(); await saveConfig(); break;
     case 'acctedit': openAcct(el.dataset.k); break;
+    case 'cardpaid': { const x = (config.accounts || {})[el.dataset.k]; if (!x) break; x.paidDue = x.due; x.paid = { date: isoDate(today()), amount: +x.owing || 0 }; render(); await saveConfig(); toast('Marked as paid'); break; }
+    case 'hintadd': { const h = lenderHints().find(x => x.key === el.dataset.i); if (h) openDebt(null, h); break; }
+    case 'hintskip': config.lenderSkip = [...(config.lenderSkip || []), el.dataset.i]; render(); await saveConfig(); break;
     case 'savacct': { const x = (config.accounts || {})[el.dataset.k]; if (!x) break; x.kind = isSavingsAcct(x) ? 'bank' : 'savings'; x.kindSet = true; render(); await saveConfig(); break; }
     case 'acctsave': { const old = config.accounts[sheetCtx.k], last4 = $('a-last4').value.replace(/\D/g, '').slice(-4), k2 = last4 || sheetCtx.k; delete config.accounts[sheetCtx.k]; config.accounts[k2] = { ...old, name: $('a-name').value.trim() || old.name, nameSet: true, last4, kind: $('a-kind').value, kindSet: true, count: $('a-count').checked }; closeSheet(); render(); await saveConfig(); toast('Account saved'); break; }
     case 'acctdel': if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; } delete config.accounts[sheetCtx.k]; closeSheet(); render(); await saveConfig(); toast('Account removed'); break;
@@ -3062,7 +3178,7 @@ document.addEventListener('change', async e => {
   else if (el.id === 'split-on' && sheetCtx) sheetCtx.splitOn = el.checked;
   else if (el.dataset.item && sheetCtx && sheetCtx.items) { const i = sheetCtx.items[+el.dataset.item]; i.cat = el.value; i.touched = true; sheetCtx.itemsOpen = true; renderSplit(); }
   else if (el.id === 'f-receipt' && el.files && el.files[0]) { scanReceipt(el.files[0]); el.value = ''; }
-  else if (el.id === 'r-start' || el.id === 'r-freq' || el.id === 'r-end') recPreview();
+  else if (el.id === 'r-start' || el.id === 'r-freq' || el.id === 'r-end' || el.id === 'r-biz') recPreview();
   else if (el.id === 'csvfile' && el.files && el.files[0]) readCSV(el.files[0]);
   else if (el.dataset.show && sheetCtx && sheetCtx.kind === 'arrange') { const h = new Set(config.homeHidden || []); if (el.checked) h.delete(el.dataset.show); else h.add(el.dataset.show); config.homeHidden = [...h]; render(); await saveConfig(); }
   else if (el.id === 'shotfile' && el.files && el.files.length) { readShots([...el.files]); el.value = ''; }
