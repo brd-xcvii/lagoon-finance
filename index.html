@@ -259,6 +259,30 @@ nav.tabs .add:disabled{opacity:.5}
 .copybox span{flex:1;min-width:0;overflow-wrap:anywhere}
 .goalring{width:56px;height:56px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
 .goalring span{width:44px;height:44px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
+.fold{display:flex;flex-direction:column}
+.fold>summary{list-style:none;cursor:pointer}
+.fold>summary::-webkit-details-marker{display:none}
+.foldhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;min-height:60px}
+.foldchev{display:flex;color:var(--faint);transition:transform .2s}
+.fold[open] .foldchev{transform:rotate(90deg)}
+.foldbody{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chipsel{appearance:none;-webkit-appearance:none;height:36px;max-width:100%;padding:0 30px 0 14px;border-radius:999px;border:1px solid var(--field-line);background-color:var(--field);color:var(--fg);font-weight:700;font-size:13px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 17px) 16px,calc(100% - 12px) 16px;background-size:5px 5px;background-repeat:no-repeat;text-overflow:ellipsis}
+.chipsel.on{border-color:var(--accent);background-color:var(--accent-soft);color:var(--accent)}
+.tx.pick .tick{width:26px;height:26px;flex:none;border-radius:13px;border:2px solid var(--field-line);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:var(--accent-ink)}
+.tx.pick[aria-pressed="true"] .tick{background:var(--accent);border-color:var(--accent)}
+.selbar{position:fixed;z-index:25;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));width:min(480px,calc(100% - 24px));display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;border-radius:var(--r-lg)}
+.selbar .btn{min-height:42px;padding:0 14px}
+.askfab{position:fixed;z-index:21;right:max(18px,calc(50% - 250px));bottom:calc(96px + env(safe-area-inset-bottom,0px));width:52px;height:52px;border-radius:26px;border:1px solid var(--line);background:var(--glass-2);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);color:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 10px 24px var(--shadow)}
+.asklist{display:flex;flex-direction:column;justify-content:flex-end;gap:10px;padding-bottom:8px;min-height:calc(100svh - 300px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
+.bubble{max-width:86%;padding:10px 14px;border-radius:20px;line-height:1.45;font-size:15px;overflow-wrap:anywhere}
+.bubble.me{align-self:flex-end;background:var(--accent);color:var(--accent-ink);border-bottom-right-radius:6px}
+.bubble.ai{align-self:flex-start;background:var(--glass-2);border:1px solid var(--line);border-bottom-left-radius:6px}
+.askbar{position:sticky;bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:5;padding:8px;border-radius:var(--r-lg);display:flex;flex-direction:column;gap:6px}
+.micbtn{width:48px;height:48px;flex:none;border-radius:24px;border:1px solid var(--line);background:var(--field);color:var(--accent);display:flex;align-items:center;justify-content:center}
+.micbtn[aria-pressed="true"]{background:var(--over);color:#fff;border-color:transparent;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.08)}}
+.seg button{min-width:0;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -277,6 +301,7 @@ nav.tabs .add:disabled{opacity:.5}
   <button type="button" data-act="tab" data-tab="more" aria-label="More"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>More</button>
 </nav>
 
+<button type="button" class="askfab" id="askFab" data-act="assist" aria-label="Ask the finance assistant"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
 <div class="scrim" id="scrim" hidden data-act="close"></div>
 <section class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="Details"></section>
 <div class="toast" id="toast" hidden role="status"></div>
@@ -358,7 +383,7 @@ let months = {};                 // 'YYYY-MM' -> [tx]
 let mode = 'wait';               // 'wait' | 'db' | 'local'
 let ocrWorker = null;
 let gotConfig = false, gotMonths = false, recurringDone = false;
-const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'budget', year: today().getFullYear(), search: '', filter: 'all', actCat: '', actDate: 'period', actFrom: '', actTo: '', actShow: 150, catView: null, searchTimer: 0, calMonth: '', calDay: '', cpIdx: 0, cpWhat: '', cpTimer: 0 };
+const ui = { tab: storeGet('lf-tab') || 'home', month: mk(today()), period: storeGet('lf-period') === 'week' ? 'week' : 'month', week: weekStartOf(isoDate(today())), planTab: 'spending', folds: {}, year: today().getFullYear(), search: '', filter: 'all', actType: 'main', actAcct: '', actAmt: '', actSort: 'new', sel: null, actCat: '', actDate: 'period', actFrom: '', actTo: '', actShow: 150, catView: null, searchTimer: 0, calMonth: '', calDay: '', cpIdx: 0, cpWhat: '', cpTimer: 0 };
 
 /* ---------- persistence ---------- */
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -370,7 +395,7 @@ function mergeConfig(d) {
   if (!c.accounts || typeof c.accounts !== 'object' || Array.isArray(c.accounts)) c.accounts = {};
   return c;
 }
-const HH_OK = new Set(['tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'fcliving', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
+const HH_OK = new Set(['actshowtransfers', 'assist', 'asksend', 'askidea', 'askmic', 'askspeak', 'askhands', 'aisettings', 'aikeysave', 'aikeydel', 'aivoicetest', 'aiclear', 'tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'fcliving', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
 /* a risky button asks for a second tap */
 function confirmTap(el, msg) { if (el.dataset.armed) return true; el.dataset.armed = '1'; el.textContent = msg; setTimeout(() => { delete el.dataset.armed; }, 4000); return false; }
 /* ---------- people: each person has their own data; Household joins them, view only ---------- */
@@ -416,7 +441,7 @@ function buildHousehold() {
 }
 function switchPerson(id) {
   if (id === 'h' && !hasTwo()) id = personIds()[0];
-  if (id === 'h') { const h = buildHousehold(); config = h.config; months = h.months; curId = 'h'; if (ui.planTab === 'commission') ui.planTab = 'budget'; }
+  if (id === 'h') { const h = buildHousehold(); config = h.config; months = h.months; curId = 'h'; ui.sel = null; }
   else { config = pdata[id].config; months = pdata[id].months; curId = id; }
   people.active = id; savePeople();
   $('addBtn').disabled = isHH();
@@ -631,6 +656,7 @@ const I = {
   wallet: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg>',
   people: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>',
   report: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 17v-3M12 17v-6M15 17v-4"/></svg>',
+  spark: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>',
   chev: '<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'
 };
 function monthNav(act) {
@@ -642,7 +668,7 @@ function monthNav(act) {
 }
 function txRow(t) {
   const sign = t.type === 'income' ? '+' : '−';
-  const src = (isHH() && t.owner ? ' · ' + esc(pname(t.owner)) : '') + (t.pending ? ' · Pending' : '') + (t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.shot ? ' · Screenshot' : t.src === 'import' ? ' · Imported' : '');
+  const src = (isHH() && t.owner ? ' · ' + esc(pname(t.owner)) : '') + (t.pending ? ' · Pending' : '') + (isTransfer(t) ? ' · Transfer' : '') + (t.src === 'bank' ? ' · Bank' : t.src === 'receipt' ? ' · Receipt' : t.src === 'recurring' ? ' · Recurring' : t.shot ? ' · Screenshot' : t.src === 'import' ? ' · Imported' : '');
   return `<div class="swipe" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}"><button type="button" class="swipe-del" data-act="swipedel" tabindex="-1" aria-label="Delete ${esc(t.desc)}">Delete</button><button type="button" class="tx" data-act="edit" data-id="${esc(t.id)}" data-m="${esc(t.date.slice(0,7))}">
     <span class="avatar" aria-hidden="true">${esc((t.desc || '?').trim().charAt(0).toUpperCase())}</span>
     <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${src}</div></span>
@@ -696,7 +722,10 @@ function periodBar() {
     <button type="button" class="iconbtn" data-act="month" data-d="1" aria-label="Next ${wk ? 'week' : 'month'}">${I.right}</button></div>`;
 }
 const HOME_SECTIONS = [['safe', 'Safe to spend'], ['accounts', 'Accounts'], ['savings', 'Savings'], ['month', 'Month or week balance'], ['alerts', 'Budget alerts'], ['weekly', 'This week'], ['totals', 'Income and expenses'], ['planned', 'Planned vs actual'], ['due', 'Due soon'], ['goals', 'Goals'], ['recent', 'Recent']];
-const PLAN_TABS = [['budget', 'Budget'], ['calendar', 'Bills'], ['commission', 'Commission'], ['savings', 'Savings'], ['goals', 'Goals'], ['debts', 'Debts'], ['borrow', 'Borrowing'], ['trends', 'Trends'], ['year', 'Year']];
+/* Plan has four tabs that always fit on screen. Older links to the nine original views land on the tab that now holds them. */
+const PLAN_TABS = [['spending', 'Spending'], ['income', 'Income'], ['savings', 'Savings'], ['debt', 'Debt']];
+const PLAN_OF = { budget: 'spending', calendar: 'spending', trends: 'spending', year: 'spending', commission: 'income', savings: 'savings', goals: 'savings', debts: 'debt', borrow: 'debt' };
+const planKey = k => PLAN_OF[k] || (PLAN_TABS.some(t => t[0] === k) ? k : 'spending');
 function ordered(list, saved) { const ids = list.map(x => x[0]), o = (Array.isArray(saved) ? saved : []).filter(id => ids.includes(id)); return [...o, ...ids.filter(id => !o.includes(id))].map(id => list.find(x => x[0] === id)); }
 function viewHome() {
   const p = curPeriod(), wk = p.kind === 'week', word = wk ? 'week' : 'month';
@@ -750,6 +779,13 @@ function viewHome() {
 /* Activity: search, type, category and date filters. Typing only redraws the results, not the whole page. */
 const ACT_DATES = [['period', 'Month or week shown'], ['30', 'Last 30 days'], ['90', 'Last 3 months'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Pick dates']];
 const ACT_PAGE = 150;
+/* Transfers to people and between accounts stay out of search unless you ask for them, so a search finds real spending. */
+const TRANSFER_RE = /\b(fast |internet |direct )?transfer\b|\btrans(fer)? (to|from)\b|\bosko\b|\bpay ?id\b|pay anyone|\btfr\b/i;
+const isTransfer = t => t.transfer != null ? !!t.transfer : (t.cat !== 'Debt' && t.cat !== BORROW_CAT && TRANSFER_RE.test(t.desc || ''));
+const ACT_TYPES = [['main', 'Spending and income'], ['expense', 'Spending'], ['income', 'Income'], ['transfer', 'Transfers only'], ['all', 'Everything']];
+const ACT_AMTS = [['', 'Any amount'], ['0-20', 'Under $20'], ['20-100', '$20 to $100'], ['100-500', '$100 to $500'], ['500-', 'Over $500']];
+const ACT_SORTS = [['new', 'Newest first'], ['old', 'Oldest first'], ['big', 'Largest first'], ['small', 'Smallest first'], ['store', 'Store A to Z']];
+const selKey = t => `${t.date.slice(0, 7)}|${t.id}`;
 function actFiltered() {
   const q = ui.search.trim().toLowerCase(), mode = ui.actDate || 'period', now = isoDate(today());
   let list;
@@ -758,10 +794,20 @@ function actFiltered() {
   else if (mode === 'year') list = txRange({ from: `${now.slice(0, 4)}-01-01`, to: `${now.slice(0, 4)}-12-31` });
   else if (mode === 'custom') { const f = ui.actFrom || '0000-01-01', t = ui.actTo || '9999-12-31'; list = allTx().filter(x => x.date >= f && x.date <= t); }
   else list = allTx();
-  if (q) { const qn = q.replace(/[$,]/g, ''); list = list.filter(t => (t.desc + ' ' + t.cat).toLowerCase().includes(q) || (qn && String(t.amount).includes(qn))); }
-  if (ui.filter !== 'all') list = list.filter(t => t.type === ui.filter);
-  if (ui.actCat) { const [ty, ...rest] = ui.actCat.split('|'), name = rest.join('|'); list = list.filter(t => t.type === ty && t.cat === name); }
-  return list.sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+  // every word you type has to appear, so "uber eats" finds Uber Eats and not Uber trips
+  if (q) { const words = q.replace(/[$,]/g, '').split(/\s+/).filter(Boolean); list = list.filter(t => { const hay = `${t.desc} ${t.cat} ${(+t.amount || 0).toFixed(2)}`.toLowerCase(); return words.every(w => hay.includes(w)); }); }
+  const ty = ui.actType || 'main';
+  if (ty === 'transfer') list = list.filter(isTransfer);
+  else if (ty !== 'all') list = list.filter(t => !isTransfer(t) && (ty === 'main' || t.type === ty));
+  if (ui.actCat) { const [tp, ...rest] = ui.actCat.split('|'), name = rest.join('|'); list = list.filter(t => t.type === tp && t.cat === name); }
+  if (ui.actAcct) list = list.filter(t => ui.actAcct === '-' ? !t.acct : t.acct === ui.actAcct);
+  if (ui.actAmt) { const [lo, hi] = ui.actAmt.split('-'); list = list.filter(t => +t.amount >= (+lo || 0) && (hi === '' || hi == null || +t.amount < +hi)); }
+  const s = ui.actSort || 'new', byDate = (a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id));
+  if (s === 'old') return list.sort((a, b) => -byDate(a, b));
+  if (s === 'big') return list.sort((a, b) => (+b.amount || 0) - (+a.amount || 0) || byDate(a, b));
+  if (s === 'small') return list.sort((a, b) => (+a.amount || 0) - (+b.amount || 0) || byDate(a, b));
+  if (s === 'store') return list.sort((a, b) => storeName(a.desc).localeCompare(storeName(b.desc)) || byDate(a, b));
+  return list.sort(byDate);
 }
 function actHead() {
   const q = ui.search.trim(), mode = ui.actDate || 'period';
@@ -769,37 +815,108 @@ function actHead() {
   const label = q ? 'Search results' : (ACT_DATES.find(d => d[0] === mode) || ACT_DATES[0])[1];
   return `<h1 class="h1">${esc(label)}</h1>${q && mode === 'period' ? '<div class="tiny muted" style="margin-top:-8px">Searching all dates</div>' : ''}`;
 }
+/* a transaction you can tick while picking several */
+function pickRow(t) {
+  const on = ui.sel && ui.sel.has(selKey(t)), sign = t.type === 'income' ? '+' : '−';
+  return `<button type="button" class="tx pick" data-act="actpick" data-k="${esc(selKey(t))}" aria-pressed="${on}">
+    <span class="tick" aria-hidden="true">${on ? '✓' : ''}</span>
+    <span class="t"><div>${esc(t.desc)}</div><div class="tiny muted">${esc(t.cat)} · ${esc(prettyDay(t.date))}${isTransfer(t) ? ' · Transfer' : ''}</div></span>
+    <span class="amt num ${t.type === 'income' ? 'in' : ''}">${sign}${money(t.amount)}</span></button>`;
+}
 function actResults() {
-  const list = actFiltered(), shown = list.slice(0, ui.actShow || ACT_PAGE), q = ui.search.trim();
+  const list = actFiltered(), shown = list.slice(0, ui.actShow || ACT_PAGE), q = ui.search.trim(), row = ui.sel ? pickRow : txRow;
+  const byDay = !ui.actSort || ui.actSort === 'new' || ui.actSort === 'old';
   const groups = []; let last = null;
-  for (const t of shown) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length - 1].items.push(t); }
+  if (byDay) for (const t of shown) { if (t.date !== last) { groups.push({ day: t.date, items: [] }); last = t.date; } groups[groups.length - 1].items.push(t); }
   const sum = list.reduce((a, t) => a + (t.type === 'income' ? +t.amount : -t.amount), 0);
-  const filtered = q || ui.actCat || ui.filter !== 'all' || (ui.actDate && ui.actDate !== 'period');
+  const hidden = (ui.actType || 'main') === 'main' ? actHiddenTransfers() : 0;
+  const filtered = q || ui.actCat || ui.actAcct || ui.actAmt || (ui.actType || 'main') !== 'main' || (ui.actDate && ui.actDate !== 'period');
   return `<div class="row between small muted" style="padding:0 4px"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span><span class="num">Net ${sum < 0 ? '−' : '+'}${money(Math.abs(sum))}</span></div>
-  ${groups.length ? `<section class="glass card" style="padding:4px 14px 8px">${groups.map(g => `<div class="daylabel">${esc(prettyDay(g.day))}</div><div class="list">${g.items.map(txRow).join('')}</div>`).join('')}</section>
+  ${hidden ? `<button type="button" class="link small" style="align-self:flex-start;padding:0 4px" data-act="actshowtransfers">${hidden} transfer${hidden === 1 ? '' : 's'} hidden. Show them</button>` : ''}
+  ${shown.length ? `<section class="glass card" style="padding:4px 14px 8px">${byDay ? groups.map(g => `<div class="daylabel">${esc(prettyDay(g.day))}</div><div class="list">${g.items.map(row).join('')}</div>`).join('') : `<div class="list" style="padding-top:6px">${shown.map(row).join('')}</div>`}</section>
     ${list.length > shown.length ? `<button type="button" class="btn block" data-act="actmore">Show ${Math.min(ACT_PAGE, list.length - shown.length)} more of ${list.length - shown.length}</button>` : ''}`
     : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">${filtered ? 'No matches' : 'Nothing here yet'}</div><div class="small">${filtered ? 'Try a shorter search or clear the filters.' : 'Tap + to add a transaction or scan a receipt.'}</div></div>`}`;
 }
+/* how many transfers the search would show if transfers were included */
+function actHiddenTransfers() {
+  const keep = ui.actType; ui.actType = 'transfer';
+  try { return actFiltered().length; } finally { ui.actType = keep; }
+}
 function refreshActivity() {
   const h = $('actHead'), r = $('actResults'); if (!h || !r) { render(); return; }
-  h.innerHTML = actHead(); r.innerHTML = actResults();
+  h.innerHTML = actHead(); r.innerHTML = actResults(); const b = $('selBar'); if (b) b.outerHTML = selBar();
+}
+function selBar() {
+  if (!ui.sel) return '<div id="selBar" hidden></div>';
+  const n = ui.sel.size;
+  return `<div id="selBar" class="selbar glass" role="toolbar" aria-label="Selected transactions">
+    <span class="small" style="font-weight:800;white-space:nowrap">${n} selected</span>
+    <button type="button" class="btn primary" data-act="bulkcat" ${n ? '' : 'disabled'}>Category</button>
+    <button type="button" class="btn" data-act="bulktransfer" ${n ? '' : 'disabled'}>Transfer</button>
+    <button type="button" class="link" data-act="actselend">Done</button></div>`;
+}
+function chipSel(id, label, opts, val, extra = '') {
+  const on = !!val && !(id === 'act-type' && val === 'main') && !(id === 'act-sort' && val === 'new') && !(id === 'act-date' && val === 'period');
+  return `<select class="chipsel ${on ? 'on' : ''}" id="${id}" aria-label="${esc(label)}">${extra}${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 function viewActivity() {
-  const mode = ui.actDate || 'period';
+  const mode = ui.actDate || 'period', ty = ui.actType || 'main';
   const catOpt = type => (type === 'income' ? config.income : config.expense).map(c => { const v = `${type}|${c.name}`; return `<option value="${esc(v)}" ${ui.actCat === v ? 'selected' : ''}>${esc(c.name)}</option>`; }).join('');
-  const active = ui.actCat || ui.filter !== 'all' || mode !== 'period' || ui.search.trim();
+  const accts = Object.values(config.accounts || {});
+  const active = ui.actCat || ui.actAcct || ui.actAmt || ty !== 'main' || mode !== 'period' || (ui.actSort || 'new') !== 'new' || ui.search.trim();
   return `${loadingNote()}<div id="actHead" style="display:flex;flex-direction:column;gap:14px">${actHead()}</div>
   <div class="field"><label for="search">Search all transactions</label><input class="input" id="search" type="search" placeholder="Store, category or amount" value="${esc(ui.search)}" autocomplete="off" autocorrect="off" spellcheck="false"></div>
-  <div class="seg" role="group" aria-label="Filter">
-    ${['all','expense','income'].map(f => `<button type="button" data-act="filter" data-f="${f}" aria-pressed="${ui.filter === f}">${f === 'all' ? 'All' : f === 'expense' ? 'Expenses' : 'Income'}</button>`).join('')}
-  </div>
-  <div class="grid2">
-    <div class="field"><label for="act-cat">Category</label><select class="input" id="act-cat"><option value="">All categories</option>${ui.filter !== 'income' ? `<optgroup label="Expenses">${catOpt('expense')}</optgroup>` : ''}${ui.filter !== 'expense' ? `<optgroup label="Income">${catOpt('income')}</optgroup>` : ''}</select></div>
-    <div class="field"><label for="act-date">Dates</label><select class="input" id="act-date">${ACT_DATES.map(([v, l]) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${v === 'period' ? (ui.period === 'week' ? 'Week shown' : 'Month shown') : l}</option>`).join('')}</select></div>
+  <div class="chips" role="group" aria-label="Filters">
+    ${chipSel('act-type', 'Type', ACT_TYPES, ty)}
+    <select class="chipsel ${ui.actCat ? 'on' : ''}" id="act-cat" aria-label="Category"><option value="">All categories</option>${ty !== 'income' ? `<optgroup label="Spending">${catOpt('expense')}</optgroup>` : ''}${ty !== 'expense' ? `<optgroup label="Income">${catOpt('income')}</optgroup>` : ''}</select>
+    ${accts.length ? chipSel('act-acct', 'Account', [['', 'All accounts'], ...accts.map(x => [acctKey(x), `${x.name}${x.last4 ? ' ••' + x.last4 : ''}`]), ['-', 'No account']], ui.actAcct) : ''}
+    ${chipSel('act-date', 'Dates', ACT_DATES.map(([v, l]) => [v, v === 'period' ? (ui.period === 'week' ? 'Week shown' : 'Month shown') : l]), mode)}
+    ${chipSel('act-amt', 'Amount', ACT_AMTS, ui.actAmt)}
+    ${chipSel('act-sort', 'Sort', ACT_SORTS, ui.actSort || 'new')}
   </div>
   ${mode === 'custom' ? `<div class="grid2"><div class="field"><label for="act-from">From</label><input class="input" type="date" id="act-from" value="${esc(ui.actFrom || '')}"></div><div class="field"><label for="act-to">To</label><input class="input" type="date" id="act-to" value="${esc(ui.actTo || '')}"></div></div>` : ''}
-  ${active ? '<button type="button" class="link" style="align-self:flex-start" data-act="actclear">Clear search and filters</button>' : ''}
-  <div id="actResults" style="display:flex;flex-direction:column;gap:14px">${actResults()}</div>`;
+  <div class="row between" style="padding:0 4px">${active ? '<button type="button" class="link" data-act="actclear">Clear search and filters</button>' : '<span></span>'}${isHH() ? '' : `<button type="button" class="link" data-act="${ui.sel ? 'actselend' : 'actselect'}">${ui.sel ? 'Cancel' : 'Select'}</button>`}</div>
+  ${ui.sel ? `<div class="row" style="gap:8px;padding:0 4px"><button type="button" class="link small" data-act="actselall">Select all shown</button><button type="button" class="link small" data-act="actselnone">Clear</button></div>` : ''}
+  <div id="actResults" style="display:flex;flex-direction:column;gap:14px">${actResults()}</div>
+  ${selBar()}`;
+}
+/* ---------- change many transactions at once, and store rules ---------- */
+const selected = () => { if (!ui.sel) return []; const out = []; for (const k of ui.sel) { const [m, ...r] = k.split('|'), id = r.join('|'), t = txOf(m).find(x => x.id === id); if (t) out.push(t); } return out; };
+function openBulkCat() {
+  const list = selected(); if (!list.length) return;
+  const types = [...new Set(list.map(t => t.type))], type = types.length === 1 ? types[0] : (list.filter(t => t.type === 'expense').length >= list.length / 2 ? 'expense' : 'income');
+  const same = list.filter(t => t.type === type), stores = [...new Set(same.map(t => normKey(t.desc)))], one = stores.length === 1 && stores[0] ? stores[0] : '';
+  const others = one ? allTx().filter(t => t.type === type && !ui.sel.has(selKey(t)) && normKey(t.desc).includes(one)).length : 0;
+  openSheet(`${sheetHead('Set category')}
+  <div class="note">${same.length} ${type === 'income' ? 'income' : 'spending'} transaction${same.length === 1 ? '' : 's'}${same.length < list.length ? `. ${list.length - same.length} of the other type stay as they are` : ''}.</div>
+  <div class="field"><label for="bc-cat">Category</label><select class="input" id="bc-cat">${catOptions(type, '')}</select></div>
+  ${one ? `<label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" id="bc-rule" checked style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Put future <b>${esc(storeName(same[0].desc))}</b> transactions in this category too</span></label>
+  ${others ? `<label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" id="bc-past" checked style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Also change ${others} earlier ${esc(storeName(same[0].desc))} transaction${others === 1 ? '' : 's'}</span></label>` : ''}` : ''}
+  <button type="button" class="btn primary block" data-act="bulkcatsave">Save</button>`, { kind: 'bulkcat', type, store: one });
+}
+/* change a category on transactions, remembering that you chose it so a bank sync never changes it back */
+function setCats(list, cat) {
+  const touched = new Set(); let n = 0;
+  for (const t of list) { if (t.cat !== cat) n++; t.cat = cat; t.catSet = true; touched.add(t.date.slice(0, 7)); }
+  return { n, touched };
+}
+function addRule(text, type, cat, past) {
+  const key = normKey(text); if (!key || !cat) return { key: '', n: 0, touched: new Set() };
+  config.rules[(type === 'income' ? 'i:' : 'e:') + key] = cat;
+  if (!past) return { key, n: 0, touched: new Set() };
+  const hit = allTx().filter(t => t.type === type && normKey(t.desc).includes(key) && !isTransfer(t));
+  return { key, ...setCats(hit, cat) };
+}
+function openRuleSheet(pre) {
+  const p = pre || {}, type = p.type || 'expense';
+  openSheet(`${sheetHead('New store rule')}
+  <div class="note">When a store name contains these words, Lagoon puts it in your chosen category. Rules beat bank sync categories.</div>
+  <div class="field"><label for="rl-text">Store name contains</label><input class="input" id="rl-text" value="${esc(p.text || '')}" placeholder="For example uber eats" autocomplete="off" autofocus></div>
+  <div class="seg" role="group" aria-label="Type">${['expense', 'income'].map(x => `<button type="button" data-act="ruletype" data-t="${x}" aria-pressed="${x === type}">${x === 'expense' ? 'Spending' : 'Income'}</button>`).join('')}</div>
+  <div class="field"><label for="rl-cat">Category</label><select class="input" id="rl-cat">${catOptions(type, p.cat || '')}</select></div>
+  <label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" id="rl-past" checked style="width:22px;height:22px;accent-color:var(--accent)"><span class="small">Also change matching transactions already in Lagoon</span></label>
+  <div class="note" id="formErr" hidden></div>
+  <button type="button" class="btn primary block" data-act="rulesave">Save rule</button>`, { kind: 'rule', type });
 }
 
 /* one category: every transaction in it for the month or week, its plan, past months and top stores */
@@ -833,28 +950,51 @@ function viewCategory() {
     : `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">Nothing in ${esc(c.name)}</div><div class="small">No transactions this ${wk ? 'week' : 'month'}. Use the arrows to look at other ${wk ? 'weeks' : 'months'}.</div></div>`}`;
 }
 
+function planBlock(type, title, p) {
+  const wk = p.kind === 'week', rows = catRows(p, type);
+  const real = rows.filter(r => !(type === 'income' && r.name === BORROW_CAT)), tp = real.reduce((a, r) => a + r.planned, 0), ta = real.reduce((a, r) => a + r.actual, 0);
+  return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
+    ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
+      <div class="row between"><button type="button" data-act="catview" data-type="${type}" data-name="${esc(r.name)}" aria-label="Open ${esc(r.name)}" style="min-width:0;flex:1;display:flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;text-align:left;color:inherit;font:inherit;cursor:pointer"><span style="min-width:0"><span style="display:block;font-weight:600">${esc(r.name)}</span><span class="tiny num" style="display:block;color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</span></span><span class="muted" style="flex:none;display:flex">${I.chev}</span></button>
+      ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0" ${isHH() ? 'readonly' : ''}>` : '<span class="tiny muted">Not in list</span>'}</div>
+      ${type === 'expense' ? statusBar(r) : ''}</div>`).join('')}</section>`;
+}
+/* a section that opens and closes; it stays open or closed when the page redraws */
+function fold(id, title, sub, body) {
+  return `<details class="fold" data-fold="${id}" ${ui.folds[id] ? 'open' : ''}><summary class="glass foldhead"><span style="min-width:0"><span class="h2" style="display:block">${esc(title)}</span>${sub ? `<span class="tiny muted num" style="display:block">${sub}</span>` : ''}</span><span class="foldchev" aria-hidden="true">${I.chev}</span></summary><div class="foldbody">${body}</div></details>`;
+}
+/* twelve months of one number as a small bar chart */
+function yearBars(label, vals, keys, colour) {
+  const maxV = Math.max(1, ...vals), active = vals.filter(v => v > 0), avg = active.length ? active.reduce((a, b) => a + b, 0) / active.length : 0;
+  return `<section class="glass card" aria-label="${esc(label)}"><div class="row between"><div class="h2">${esc(label)}</div><span class="small muted num">${money0(avg)} a month on average</span></div>
+    <div class="chart" role="img" aria-label="${esc(label)} for the last 12 months">${keys.map((k, i) => `<div class="col"><div class="pair"><i style="width:14px;height:${Math.round(vals[i] / maxV * 96)}px;background:${k === mk(today()) ? 'var(--accent)' : colour}"></i></div><span class="tiny muted" style="font-weight:700">${MSHORT[+k.slice(5) - 1]}</span></div>`).join('')}</div></section>`;
+}
 function viewPlan() {
-  const tabs = `<div class="seg" role="group" aria-label="Plan views" style="overflow-x:auto;scrollbar-width:none">${ordered(PLAN_TABS, config.planOrder).filter(([k]) => !(isHH() && k === 'commission')).map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}" style="font-size:13px;padding:0 10px;flex:1 0 auto">${l}</button>`).join('')}</div>`;
-  if (ui.planTab === 'goals') return `${tabs}${viewGoals()}`;
-  if (ui.planTab === 'debts') return `${tabs}${viewDebts()}`;
-  if (ui.planTab === 'savings') return `${tabs}${viewSavings()}`;
-  if (ui.planTab === 'trends') return `${tabs}${viewTrends()}`;
-  if (ui.planTab === 'year') return `${tabs}${viewYear()}`;
-  if (ui.planTab === 'calendar') return `${tabs}${viewCalendar()}`;
-  if (ui.planTab === 'borrow') return `${tabs}${viewBorrowing()}`;
-  if (ui.planTab === 'commission' && !isHH()) return `${tabs}${viewCommission()}`;
-  const p = curPeriod(), wk = p.kind === 'week';
-  const block = (type, title) => {
-    const rows = catRows(p, type);
-    const real = rows.filter(r => !(type === 'income' && r.name === BORROW_CAT)), tp = real.reduce((a, r) => a + r.planned, 0), ta = real.reduce((a, r) => a + r.actual, 0);
-    return `<section class="glass card" aria-label="${title}"><div class="row between"><div class="h2">${title}</div><span class="small muted num">${money0(ta)} of ${money0(tp)}</span></div>
-      ${rows.map(r => `<div style="display:flex;flex-direction:column;gap:6px">
-        <div class="row between"><button type="button" data-act="catview" data-type="${type}" data-name="${esc(r.name)}" aria-label="Open ${esc(r.name)}" style="min-width:0;flex:1;display:flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;text-align:left;color:inherit;font:inherit;cursor:pointer"><span style="min-width:0"><span style="display:block;font-weight:600">${esc(r.name)}</span><span class="tiny num" style="display:block;color:${r.status === 'over' ? 'var(--over)' : r.status === 'warn' ? 'var(--warn)' : 'var(--muted)'}">${money(r.actual)} actual${r.planned ? ' · ' + (r.diff >= 0 ? money(r.diff) + ' left' : money(-r.diff) + ' over') : ''}</span></span><span class="muted" style="flex:none;display:flex">${I.chev}</span></button>
-        ${r.idx >= 0 ? `<input class="planinput num" inputmode="decimal" aria-label="${wk ? 'Weekly' : 'Monthly'} plan for ${esc(r.name)}" id="plan-${type}-${r.idx}" data-plan="${type}" data-i="${r.idx}" data-f="${p.factor}" value="${r.planned || ''}" placeholder="$0" ${isHH() ? 'readonly' : ''}>` : '<span class="tiny muted">Not in list</span>'}</div>
-        ${type === 'expense' ? statusBar(r) : ''}</div>`).join('')}</section>`;
-  };
+  ui.planTab = planKey(ui.planTab);
+  const tabs = `<div class="seg" role="group" aria-label="Plan views">${ordered(PLAN_TABS, config.planOrder).map(([k, l]) => `<button type="button" data-act="plantab" data-p="${k}" aria-pressed="${ui.planTab === k}">${l}</button>`).join('')}</div>`;
+  const p = curPeriod(), wk = p.kind === 'week', cur = mk(today()), keys = Array.from({ length: 12 }, (_, i) => addMonths(cur, i - 11));
+  if (ui.planTab === 'income') {
+    const inc = keys.map(k => totals(k).inc);
+    return `${tabs}${periodBar()}${planBlock('income', 'Income', p)}
+    ${isHH() ? '' : `<div class="h2" style="padding:0 4px;margin-top:4px">Commission</div>${viewCommission()}`}
+    ${yearBars('Income each month', inc, keys, 'var(--good)')}`;
+  }
+  if (ui.planTab === 'savings') {
+    return `${tabs}${viewSavings()}<div class="h2" style="padding:0 4px;margin-top:4px">Goals</div>${viewGoals()}`;
+  }
+  if (ui.planTab === 'debt') {
+    const borrowedNow = totals(cur).borrowed;
+    return `${tabs}${viewDebts()}<div class="row between" style="padding:0 4px;margin-top:4px"><div class="h2">Borrowing</div><span class="small muted num">${money0(borrowedNow)} this month</span></div>${viewBorrowing()}`;
+  }
+  // Spending: the budget first, then bills, trends and the year folded away until you open them
   const note = wk ? 'Weekly plans are your monthly plans spread over the year. Change one and the other updates.' : 'Plans repeat every month.';
-  return `${tabs}${periodBar()}<div class="note" style="padding:0 4px">${note} Bars turn orange at 80% and red when you go over. Tap a category to see its transactions.</div>${block('expense','Expenses')}${block('income','Income')}`;
+  const due = dueSoon(), dueTotal = round2(due.filter(x => (x.r.type || 'expense') === 'expense').reduce((a, x) => a + (+x.r.amount || 0), 0));
+  const tNow = totals(cur).exp, tLast = totals(addMonths(cur, -1)).exp, yr = keys.map(k => totals(k).exp);
+  return `${tabs}${periodBar()}<div class="note" style="padding:0 4px">${note} Bars turn orange at 80% and red when you go over. Tap a category to see its transactions.</div>
+  ${planBlock('expense', 'Expenses', p)}
+  ${fold('bills', 'Bills', due.length ? `${due.length} due in the next 14 days · ${money0(dueTotal)}` : 'Nothing due in the next 14 days', viewCalendar())}
+  ${fold('trends', 'Trends', `${monthName(cur).name} so far ${money0(tNow)} · last month ${money0(tLast)}`, viewTrends())}
+  ${fold('year', 'Year', `Spending each month, last 12 months`, yearBars('Spending each month', yr, keys, 'var(--warn)') + viewYear())}`;
 }
 
 function viewGoals() {
@@ -902,8 +1042,12 @@ function viewMore() {
     <button type="button" data-act="backup"><span class="ic">${I.save}</span>Backup and restore${I.chev}</button></div></section>
   <div class="note" style="padding:0 4px">Household joins everyone's data and is view only. Open a person to change settings, bills or transactions.</div>
   ${themeCards()}`;
+  const ks = keysGet(), pc = config.ps || {};
   return `<h1 class="h1">More</h1>
-  <section class="glass card" style="padding:6px 16px"><div class="menu">${pp}
+  <section class="glass card" style="padding:6px 16px"><div class="menu">
+    <button type="button" data-act="pssettings"><span class="ic">${I.repeat}</span>Bank sync<span class="small muted" style="margin-left:auto">${ks.ps && pc.on ? 'On' : 'Off'}</span>${I.chev}</button>
+    <button type="button" data-act="aisettings"><span class="ic">${I.spark}</span>Finance assistant<span class="small muted" style="margin-left:auto">${ks.anthropic ? 'Ready' : 'Add key'}</span>${I.chev}</button>
+    ${pp}
     <button type="button" data-act="settings"><span class="ic">${I.wallet}</span>Starting balance<span class="small muted num" style="margin-left:auto">${money(config.startingBalance)}</span>${I.chev}</button>
     <button type="button" data-act="paysettings"><span class="ic">${I.wallet}</span>Pay and payday<span class="small muted num" style="margin-left:auto">${money0(payInfo().base)} ${esc(WEEKDAYS[payInfo().weekday].slice(0, 3))}</span>${I.chev}</button>
     <button type="button" data-act="recurring"><span class="ic">${I.repeat}</span>Recurring bills<span class="small muted" style="margin-left:auto">${config.recurring.length}</span>${I.chev}</button>
@@ -1039,7 +1183,7 @@ function forecast(opt = {}) {
     const ids = personIds(), parts = ids.map(id => [id, withPerson(id, () => forecast(opt))]).filter(x => x[1]); if (!parts.length) return null;
     const now = isoDate(today()), cash = { v: round2(parts.reduce((a, [, f]) => a + f.cash.v, 0)), src: parts.every(([, f]) => f.cash.src === 'bank') ? 'bank' : 'app' };
     const rank = e => e.pay ? 0 : e.living ? 2 : 1, ev = parts.flatMap(([id, f]) => f.ev.map(e => ({ ...e, name: e.living ? e.name : `${e.name} (${pname(id)})` }))).sort((a, b) => a.date.localeCompare(b.date) || rank(a) - rank(b));
-    let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
+    let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = cash.v < 0 ? { date: now, name: 'Your balance today', v: 0, bal: cash.v } : null;
     for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
     const pi = { ...parts[0][1].pi, base: round2(parts.reduce((a, [, f]) => a + (f.pi.base || 0), 0)) };
     return { cash, pi, p1: parts.map(([, f]) => f.p1).sort()[0], end: parts.map(([, f]) => f.end).sort().pop(), ev, low: round2(low), lowDate, lowName, neg, billsTotal: round2(parts.reduce((a, [, f]) => a + f.billsTotal, 0)), livingTotal: round2(parts.reduce((a, [, f]) => a + (f.livingTotal || 0), 0)), living: parts.some(([, f]) => f.living) ? { weekly: round2(parts.reduce((a, [, f]) => a + (f.living ? f.living.weekly : 0), 0)) } : null, endBal: bal };
@@ -1066,7 +1210,7 @@ function forecast(opt = {}) {
   if (lc && lc.daily > 0) for (let d = addDaysIso(now, 1); d <= end; d = addDaysIso(d, 1)) ev.push({ date: d, name: 'Living costs', v: -round2(lc.daily), living: true });
   const rank = e => e.pay ? 0 : e.living ? 2 : 1;
   ev.sort((a, b) => a.date.localeCompare(b.date) || rank(a) - rank(b));
-  let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = null;
+  let bal = cash.v, low = cash.v, lowDate = now, lowName = '', neg = cash.v < 0 ? { date: now, name: 'Your balance today', v: 0, bal: cash.v } : null;
   for (const e of ev) { bal = round2(bal + e.v); e.bal = bal; if (bal < low) { low = bal; lowDate = e.date; lowName = e.name; } if (bal < 0 && !neg) neg = e; }
   const billsTotal = round2(-ev.filter(e => !e.pay && !e.living).reduce((a, e) => a + e.v, 0)), livingTotal = round2(-ev.filter(e => e.living).reduce((a, e) => a + e.v, 0));
   return { cash, pi, p1, end, ev, low: round2(low), lowDate, lowName, neg, billsTotal, livingTotal, living: lc, endBal: bal, bd };
@@ -2049,8 +2193,8 @@ function render() {
   const v = $('view');
   const active = document.activeElement && document.activeElement.id;
   const selStart = active && document.activeElement.selectionStart;
-  v.innerHTML = personChip() + (ui.tab === 'category' ? viewCategory() : ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome());
-  const navTab = ui.tab === 'category' ? 'plan' : ui.tab;
+  v.innerHTML = (ui.tab === 'ask' ? '' : personChip()) + (ui.tab === 'ask' ? viewAsk() : ui.tab === 'category' ? viewCategory() : ui.tab === 'forecast' ? viewForecast() : ui.tab === 'activity' ? viewActivity() : ui.tab === 'plan' ? viewPlan() : ui.tab === 'more' ? viewMore() : viewHome());
+  const navTab = ui.tab === 'category' ? 'plan' : ui.tab; const fab = $('askFab'); if (fab) fab.hidden = ui.tab === 'ask' || !!ui.sel;
   document.querySelectorAll('nav.tabs [data-tab]').forEach(b => { if (b.dataset.tab === navTab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
   if (active && $(active) && v.contains($(active))) { const el = $(active); el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch {} }
 }
@@ -2255,7 +2399,9 @@ async function saveTx() {
     }
   }
   if (learnItems(ctx.items)) await saveConfig();
-  const tx = { id: ctx.orig ? ctx.orig.id : uid(), date, amount: round2(amount), desc, cat, type: ctx.type, src: ctx.orig ? ctx.orig.src : ctx.src };
+  const o = ctx.orig, keep = {}; if (o) for (const f of ['ps', 'acct', 'batch', 'transfer', 'shot', 'debtId', 'catSet', 'pending']) if (o[f] != null) keep[f] = o[f];
+  const tx = { ...keep, id: o ? o.id : uid(), date, amount: round2(amount), desc, cat, type: ctx.type, src: o ? o.src : ctx.src };
+  if (o && o.cat !== cat) tx.catSet = true;
   if (ctx.orig) { const ok = ctx.orig.date.slice(0, 7); months[ok] = txOf(ok).filter(t => t.id !== ctx.orig.id); touched.add(ok); }
   (months[key] = months[key] || []).push(tx);
   closeSheet(); render();
@@ -2268,9 +2414,10 @@ async function removeTx(o) {
   months[k] = txOf(k).filter(t => t.id !== o.id);
   let rec = null, skipKey = null;
   if (o.src === 'recurring') { const m = /^rec-(.+?)-(\d{4}-\d{2}(?:-\d{2})?)$/.exec(o.id); rec = m && config.recurring.find(x => x.id === m[1]); if (rec) { skipKey = m[2]; rec.skip = [...new Set([...(rec.skip || []), skipKey])]; } }
-  render(); await saveMonth(k); if (rec) await saveConfig();
+  if (o.ps) { const pc = psConf(); pc.ignored = [...(pc.ignored || []), o.ps].slice(-3000); }
+  render(); await saveMonth(k); if (rec || o.ps) await saveConfig();
   toast(`Deleted ${o.desc}`, { label: 'Undo', run: async () => {
-    (months[k] = months[k] || []).push(o);
+    (months[k] = months[k] || []).push(o); if (o.ps) { const pc = psConf(); pc.ignored = (pc.ignored || []).filter(x => x !== o.ps); await saveConfig(); }
     if (rec) rec.skip = (rec.skip || []).filter(x => x !== skipKey);
     render(); await saveMonth(k); if (rec) await saveConfig(); toast('Restored');
   } });
@@ -2470,8 +2617,8 @@ function openCategories() {
     <div class="row"><input class="input" id="newcat-${type}" placeholder="New ${type} category" style="flex:1"><button type="button" class="btn" data-act="catadd" data-type="${type}">Add</button></div>`;
   const rules = Object.entries(config.rules || {});
   openSheet(`${sheetHead('Categories')}${block('expense')}${block('income')}
-  <div class="h2">Store rules</div>
-  <div class="note">The app learns these when you save a transaction. A matching store gets the same category next time.</div>
+  <div class="row between"><div class="h2">Store rules</div><button type="button" class="link" data-act="rulenew">New rule</button></div>
+  <div class="note">The app learns these when you save a transaction or change a category. A matching store gets the same category next time, including from bank sync.</div>
   ${rules.length ? `<div class="list">${rules.map(([k, v]) => `<div class="row between" style="min-height:44px;border-bottom:1px solid var(--divider)"><span class="small" style="min-width:0;overflow-wrap:anywhere">${esc(k.slice(2))} → ${esc(v)}</span><button type="button" class="link" style="color:var(--over)" data-act="ruledel" data-k="${esc(k)}">Forget</button></div>`).join('')}</div>` : '<div class="note">No store rules yet.</div>'}`, { kind: 'cats' });
 }
 
@@ -3021,6 +3168,405 @@ function toast(msg, action) {
   t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; toastAction = null; }, action ? 5000 : 2600);
 }
 
+/* ---------- keys: kept on this iPhone only. Never in the app's data, backups, exports or code. ---------- */
+const KEYS_STORE = 'lf-keys';
+function keysGet() { try { const o = JSON.parse(localStorage.getItem(KEYS_STORE) || '{}'); return o && typeof o === 'object' ? o : {}; } catch { return {}; } }
+function keysSet(patch) { const o = { ...keysGet(), ...patch }; for (const k of Object.keys(o)) if (o[k] == null || o[k] === '') delete o[k]; try { localStorage.setItem(KEYS_STORE, JSON.stringify(o)); return true; } catch { toast('Could not save the key on this phone.'); return false; } }
+const keyMask = k => k ? '••••' + String(k).slice(-4) : 'Not set';
+const cleanKey = v => String(v || '').replace(/\s+/g, '');
+
+/* ---------- bank sync: PocketSmith pulls your CommBank accounts; Lagoon reads them and files each line in your own categories ---------- */
+const PS_API = 'https://api.pocketsmith.com/v2';
+const PS_MAP = { 'Income': 'Paycheck', 'Interest': 'Interest', 'Groceries': 'Food', 'Eating Out': 'Food', 'Alcohol': 'Food', 'Alcohol & Bars': 'Food', 'Phone': 'Utilities', 'Utilities': 'Utilities', 'Home Improvement': 'Home', 'Housing': 'Home', 'Household': 'Home', 'Media': 'Subscriptions', 'Electronics': 'Personal', 'Recreation': 'Personal', 'Entertainment': 'Personal', 'Gambling': 'Personal', 'Personal Care': 'Personal', 'Clothing': 'Personal', 'Education': 'Personal', 'Fuel': 'Transportation', 'Transport': 'Transportation', 'Automotive': 'Transportation', 'Travel': 'Travel', 'Healthcare / Medical': 'Health/Medical', 'Pets': 'Pets', 'Insurance': 'Insurance', 'Donations': 'Gifts', 'Loan Repayment': 'Debt', 'Bank Fees': 'Other', 'Cash Withdrawal': 'Other', 'Postage': 'Other', 'Government Services': 'Other', 'Professional Services': 'Other', 'Transfers': 'Other' };
+const PS_MAP_IN = { 'Income': 'Paycheck', 'Interest': 'Interest', 'Transfers': 'Other' };
+const psConf = () => (config.ps = config.ps || { map: {}, ignored: [], seen: [] });
+const psDefault = (title, type) => type === 'income' ? (PS_MAP_IN[title] || 'Repayment') : (PS_MAP[title] || 'Other');
+const psMapped = (title, type) => { const m = psConf().map[(type === 'income' ? 'i:' : 'e:') + title]; return m || psDefault(title, type); };
+const psPayee = s => String(s || '').replace(/,?\s*card xx\d+.*$/i, '').replace(/,?\s*value date:?\s*[\d/]+.*$/i, '').replace(/\s+/g, ' ').trim();
+const last4Of = s => (String(s || '').replace(/\D/g, '').slice(-4));
+/* your store rules first, then lenders and known stores, then the PocketSmith category mapped onto yours */
+function psCat(desc, type, title) {
+  const names = (type === 'income' ? config.income : config.expense).map(c => c.name);
+  const s = suggestCat(desc, type); if (s) return s;
+  const m = title ? psMapped(title, type) : ''; if (m && names.includes(m)) return m;
+  return names.includes('Other') ? 'Other' : names[0] || 'Other';
+}
+async function psFetch(path, key) {
+  let r; try { r = await fetch(PS_API + path, { headers: { 'X-Developer-Key': key, Accept: 'application/json' }, cache: 'no-store' }); } catch { throw new Error('offline'); }
+  if (r.status === 401 || r.status === 403) throw new Error('key');
+  if (r.status === 429) throw new Error('busy');
+  if (!r.ok) throw new Error('http' + r.status);
+  return r.json();
+}
+async function psPull(key, from) {
+  const me = await psFetch('/me', key);
+  const accts = await psFetch(`/users/${me.id}/transaction_accounts`, key);
+  const tx = [];
+  for (let page = 1; page <= 60; page++) { const b = await psFetch(`/users/${me.id}/transactions?start_date=${from}&per_page=100&page=${page}`, key); tx.push(...b); if (b.length < 100) break; }
+  return { me, accts, tx, from };
+}
+/* work out what a pull would change, without changing anything yet */
+function psPlan(data) {
+  const pc = psConf(), ignored = new Set(pc.ignored || []), fetched = new Set(data.tx.map(p => String(p.id)));
+  const all = allTx(), byPs = new Map(all.filter(t => t.ps).map(t => [t.ps, t])), used = new Set();
+  const isDup = dupChecker();
+  const named = (a, b) => { const wa = String(a || '').toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2), lb = String(b || '').toLowerCase(); return wa.some(w => lb.includes(w)) || storeName(a) === storeName(b); };
+  const plan = { add: [], link: [], update: [], drop: [], own: 0, from: data.from, seen: new Set() };
+  for (const p of data.tx.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)))) {
+    const id = String(p.id); if (ignored.has(id) || !p.date || !isFinite(+p.amount) || +p.amount === 0) continue;
+    const desc = psPayee(p.payee || p.original_payee) || 'Bank transaction', amount = round2(Math.abs(+p.amount)), type = +p.amount < 0 ? 'expense' : 'income';
+    const date = String(p.date).slice(0, 10), pending = p.status === 'pending', title = p.category ? p.category.title : '', acct = last4Of(p.transaction_account && p.transaction_account.number);
+    if (title) plan.seen.add((type === 'income' ? 'i:' : 'e:') + title);
+    if (OWN_MOVE.test(desc)) { plan.own++; continue; }
+    const transfer = !!(p.category && p.category.is_transfer);
+    const ex = byPs.get(id);
+    if (ex) { if (ex.date !== date || Math.abs(+ex.amount - amount) > 0.004 || !!ex.pending !== pending) plan.update.push({ t: ex, date, amount, pending }); used.add(ex); continue; }
+    // already in Lagoon from a file, a screenshot, a receipt or a bill the app added: link it instead of adding it twice
+    const k0 = date.slice(0, 7); let best = null, score = 99;
+    for (const k of [addMonths(k0, -1), k0, addMonths(k0, 1)]) for (const t of txOf(k)) {
+      if (used.has(t) || t.type !== type || (t.ps && !(t.pending && !fetched.has(t.ps)))) continue;
+      const d = Math.abs(dayDiff(t.date, date)); if (d > 4) continue;
+      const exact = Math.abs((+t.amount || 0) - amount) < 0.005, nm = named(t.desc, desc);
+      let s = 99;
+      if (t.src === 'recurring') { if (nm && Math.abs((+t.amount || 0) - amount) <= Math.max(1, amount * 0.1)) s = d + 0.5; }
+      else if (exact && nm && d <= 3) s = d;
+      else if (exact && d <= 1) s = d + 2;
+      if (s < score) { score = s; best = t; }
+    }
+    if (best) { used.add(best); plan.link.push({ t: best, id, date, amount, desc, pending, acct, transfer, bill: best.src === 'recurring' }); continue; }
+    if (isDup(date, amount, desc, type)) continue;
+    plan.add.push({ id: 'ps-' + id, ps: id, date, amount, desc, cat: psCat(desc, type, title), type, src: 'bank', ...(title ? { psc: title } : {}), ...(acct ? { acct } : {}), ...(pending ? { pending: true } : {}), ...(transfer ? { transfer: true } : {}) });
+  }
+  // a pending line the bank has since replaced with the posted one
+  for (const t of all) if (t.ps && t.pending && !fetched.has(t.ps) && t.date >= data.from && !used.has(t)) plan.drop.push(t);
+  return plan;
+}
+/* the accounts PocketSmith sees: balances replace older screenshot readings */
+function psAccounts(accts) {
+  config.accounts = config.accounts || {}; let n = 0;
+  for (const a of accts || []) {
+    const name = a.name || 'Account', l4 = last4Of(a.number), bal = round2(+a.current_balance || 0);
+    if (/investment|share|trading/i.test(name)) continue;
+    if (/loan/i.test(name)) {
+      const ds = (config.debts || []).filter(d => /personal|car|cba|commbank|comm bank/i.test(`${d.name} ${d.match || ''}`) && /loan/i.test(`${d.name} ${d.match || ''}`));
+      const d = debtOf(name) || (ds.length === 1 ? ds[0] : null);
+      if (d) { d.balance = round2(Math.abs(bal)); d.asOf = isoDate(today()); d.setAt = Date.now(); n++; }
+      continue;
+    }
+    const k = l4 || name, old = config.accounts[k] || {}, card = a.type === 'credits';
+    const x = { ...old, name: old.nameSet ? old.name : name, last4: l4, balance: bal, at: Date.now(), src: 'bank' };
+    delete x.available;
+    if (!old.kindSet) x.kind = card ? 'card' : /saver|savings|goal/i.test(name) ? 'savings' : 'bank';
+    if (card) x.owing = round2(Math.max(0, -bal));
+    config.accounts[k] = x; n++;
+  }
+  return n;
+}
+function psApply(plan) {
+  const touched = new Set(), pc = psConf();
+  for (const u of plan.update) { const t = u.t, k = t.date.slice(0, 7); months[k] = txOf(k).filter(x => x !== t); touched.add(k); t.date = u.date; t.amount = u.amount; if (u.pending) t.pending = true; else delete t.pending; (months[u.date.slice(0, 7)] = months[u.date.slice(0, 7)] || []).push(t); touched.add(u.date.slice(0, 7)); }
+  for (const l of plan.link) {
+    const t = l.t, k = t.date.slice(0, 7);
+    t.ps = l.id; if (l.pending) t.pending = true; else delete t.pending; if (l.acct && !t.acct) t.acct = l.acct; if (l.transfer && t.transfer == null) t.transfer = true;
+    if (l.bill) { months[k] = txOf(k).filter(x => x !== t); touched.add(k); Object.assign(t, { date: l.date, amount: l.amount, desc: l.desc, src: 'bank' }); (months[l.date.slice(0, 7)] = months[l.date.slice(0, 7)] || []).push(t); }
+    touched.add(t.date.slice(0, 7));
+  }
+  for (const t of plan.drop) { const k = t.date.slice(0, 7); months[k] = txOf(k).filter(x => x !== t); touched.add(k); }
+  for (const t of plan.add) { const k = t.date.slice(0, 7); (months[k] = months[k] || []).push(t); touched.add(k); }
+  pc.seen = [...new Set([...(pc.seen || []), ...plan.seen])];
+  return touched;
+}
+const psSum = plan => [plan.add.length ? `${plan.add.length} new` : '', plan.link.length ? `${plan.link.length} matched to lines already in Lagoon` : '', plan.update.length ? `${plan.update.length} updated` : ''].filter(Boolean).join(', ');
+let psBusy = false;
+/* quiet sync on open, when you come back to the app, and every 15 minutes while it's open */
+async function psSync(opt = {}) {
+  const ks = keysGet(), key = ks.ps, pid = ks.psPerson || '1';
+  if (!key || psBusy || !pdata[pid]) return;
+  const pc = withPerson(pid, () => psConf());
+  if (!pc.on && !opt.first) return;
+  if (!opt.force && !opt.first && pc.last && Date.now() - pc.last < 10 * 60000) return;
+  psBusy = true; const st = $('psStatus'); if (st) st.textContent = 'Syncing…';
+  try {
+    const from = opt.from || (pc.on && pc.last ? addDaysIso(isoDate(today()), -21) : pc.from || addDaysIso(isoDate(today()), -60));
+    const data = await psPull(key, from);
+    if (opt.first) { psBusy = false; return withPerson(pid, () => ({ plan: psPlan(data), data })); }
+    let msg = '';
+    withPerson(pid, () => {
+      const plan = psPlan(data), touched = psApply(plan), nA = psAccounts(data.accts), c = psConf();
+      c.last = Date.now(); c.err = ''; saveLocal();
+      if (plan.add.length || opt.force) msg = plan.add.length ? `${plan.add.length} new transaction${plan.add.length === 1 ? '' : 's'} from your bank` : `Bank sync done${nA ? ', balances updated' : ''}`;
+      return touched;
+    });
+    if (isHH()) switchPerson('h'); else if (sheetCtx && sheetCtx.kind === 'ps') openPsSheet(); else if (ui.tab !== 'ask') render();
+    if (msg) toast(msg);
+    if (!isHH()) await applyRecurring();
+  } catch (err) {
+    const why = err.message === 'key' ? 'PocketSmith did not accept the developer key.' : err.message === 'offline' ? 'No internet, so bank sync is waiting.' : err.message === 'busy' ? 'PocketSmith is busy. Lagoon will try again soon.' : 'Bank sync could not finish. Lagoon will try again soon.';
+    withPerson(pid, () => { psConf().err = why; saveLocal(); });
+    if (opt.force || opt.first) toast(why);
+    if (sheetCtx && sheetCtx.kind === 'ps') openPsSheet();
+    if (opt.first) throw err;
+  } finally { psBusy = false; }
+}
+function openPsSheet() {
+  const ks = keysGet(), pc = psConf(), on = !!(ks.ps && pc.on);
+  const ago = pc.last ? (() => { const m = Math.round((Date.now() - pc.last) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; })() : '';
+  openSheet(`${sheetHead('Bank sync')}
+  <div class="note">PocketSmith reads your bank. Lagoon reads PocketSmith and files each line in your own categories, so you stop typing transactions in. Lagoon only reads; it never moves money.</div>
+  ${on ? `<section class="glass card" style="gap:6px"><div class="row between"><span style="font-weight:700">Connected</span><span class="chip">On</span></div>
+    <div class="small muted" id="psStatus">${pc.err ? esc(pc.err) : `Last sync ${esc(ago || 'not yet')}`}</div>
+    <div class="tiny muted">Key ${esc(keyMask(ks.ps))} · saved on this iPhone only${hasTwo() ? ` · goes to ${esc(pname(ks.psPerson || '1'))}` : ''}</div></section>
+    <button type="button" class="btn primary block" data-act="pssync">Sync now</button>
+    <button type="button" class="btn block" data-act="psmap">Category mapping</button>
+    <button type="button" class="btn danger block" data-act="psoff">Disconnect and remove key</button>`
+  : `<ol class="steps">
+    <li>In PocketSmith, open your account settings, then Security and integrations, then Manage developer keys. Create a key and copy it.</li>
+    <li><div class="field"><label for="ps-key">Paste the developer key</label><input class="input" id="ps-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${ks.ps ? esc(keyMask(ks.ps)) : 'Developer key'}"></div></li>
+    <li><div class="field"><label for="ps-from">Bring in transactions from</label><input class="input" type="date" id="ps-from" value="${esc(pc.from || addDaysIso(isoDate(today()), -60))}"></div><div class="tiny muted">Lines already in Lagoon are matched, not added twice. You check the numbers before anything changes.</div></li></ol>
+    <div class="note" id="formErr" hidden></div>
+    <button type="button" class="btn primary block" data-act="pstest">Check and preview</button>`}
+  <div class="note">The key stays in this iPhone's storage. It is never in Lagoon's code, the GitHub repo, backup files or exports. If you clear this app's data, add the key again.</div>`, { kind: 'ps' });
+}
+function openPsPreview(res) {
+  const p = res.plan, accts = (res.data.accts || []).filter(a => !/investment/i.test(a.name || ''));
+  const sample = p.add.slice(-8).reverse();
+  openSheet(`${sheetHead('Check before connecting')}
+  <section class="glass card" style="gap:8px">
+    <div class="row between small"><span>New transactions to add</span><b class="num">${p.add.length}</b></div>
+    <div class="row between small"><span>Already in Lagoon, matched</span><b class="num">${p.link.length}</b></div>
+    <div class="row between small"><span>Moves between your own accounts, skipped</span><b class="num">${p.own}</b></div>
+    <div class="row between small"><span>Accounts to update</span><b class="num">${accts.length}</b></div></section>
+  ${sample.length ? `<div class="h2">Latest new lines</div><div class="list">${sample.map(t => `<div class="row between small" style="min-height:44px;border-bottom:1px solid var(--divider);gap:8px"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortDay(t.date))} · ${esc(t.desc)}<br><span class="tiny muted">${esc(t.cat)}${t.transfer ? ' · Transfer' : ''}</span></span><span class="num" style="font-weight:700">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('')}</div>` : ''}
+  <div class="note">After this, Lagoon syncs by itself when you open it. You can change the category mapping at any time.</div>
+  <button type="button" class="btn primary block" data-act="psgo">Connect and add ${p.add.length}</button>
+  <button type="button" class="btn block" data-act="psmap">Category mapping first</button>`, { kind: 'pspreview', res });
+}
+function openPsMap(back) {
+  const pc = psConf(), seen = new Set([...(pc.seen || []), ...Object.keys(PS_MAP).map(t => 'e:' + t), ...Object.keys(PS_MAP_IN).map(t => 'i:' + t)]);
+  const rows = [...seen].sort((a, b) => a.localeCompare(b)).map(k => { const type = k.startsWith('i:') ? 'income' : 'expense', title = k.slice(2); return { k, type, title, cat: psMapped(title, type) }; });
+  const block = type => rows.filter(r => r.type === type).map(r => `<div class="row between" style="gap:10px;min-height:52px;border-bottom:1px solid var(--divider)"><span class="small" style="min-width:0;flex:1;font-weight:600">${esc(r.title)}</span><select class="input" style="width:52%;height:42px" data-psmap="${esc(r.k)}">${catOptions(type, r.cat).replace('<option value="">Choose</option>', '')}</select></div>`).join('');
+  openSheet(`${sheetHead('Category mapping')}
+  <div class="note">Left: PocketSmith's category. Right: the Lagoon category it goes into. Your store rules and changes you make by hand always win.</div>
+  <div class="h2">Spending</div><div class="list">${block('expense')}</div>
+  <div class="h2">Money in</div><div class="list">${block('income')}</div>
+  <button type="button" class="btn primary block" data-act="psmapsave">Save mapping</button>
+  <button type="button" class="btn block" data-act="psmapapply">Save and re-file bank lines you haven't changed</button>`, { kind: 'psmap', back });
+}
+function psMapCollect() { const pc = psConf(); pc.map = pc.map || {}; document.querySelectorAll('[data-psmap]').forEach(s => { const k = s.dataset.psmap, type = k.startsWith('i:') ? 'income' : 'expense'; if (s.value && s.value !== psDefault(k.slice(2), type)) pc.map[k] = s.value; else delete pc.map[k]; }); }
+
+/* ---------- finance assistant: Claude with your Anthropic key, reading and tidying Lagoon only ---------- */
+const AI_API = 'https://api.anthropic.com/v1';
+const aiPrefs = () => { try { return JSON.parse(storeGet('lf-ai') || '{}') || {}; } catch { return {}; } };
+const aiPrefsSet = patch => storeSet('lf-ai', JSON.stringify({ ...aiPrefs(), ...patch }));
+let chat = (() => { try { const c = JSON.parse(storeGet('lf-chat') || '[]'); return Array.isArray(c) ? c : []; } catch { return []; } })();
+const chatSave = () => storeSet('lf-chat', JSON.stringify(chat.slice(-80)));
+let aiBusy = false, aiStatus = '';
+function aiHeaders(key) { return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'content-type': 'application/json' }; }
+/* the newest Haiku, Sonnet and Opus your key can use, read from Anthropic so the names never go stale */
+async function aiModels(key) {
+  const r = await fetch(`${AI_API}/models?limit=100`, { headers: aiHeaders(key) });
+  if (r.status === 401 || r.status === 403) throw new Error('key');
+  if (!r.ok) throw new Error('http' + r.status);
+  const ids = ((await r.json()).data || []).map(m => m.id), pick = w => ids.find(id => id.includes(w)) || '';
+  const out = { haiku: pick('haiku'), sonnet: pick('sonnet'), opus: pick('opus') };
+  aiPrefsSet({ models: out, model: aiPrefs().tier ? out[aiPrefs().tier] || out.haiku : out.haiku });
+  return out;
+}
+const aiModel = () => { const p = aiPrefs(), m = p.models || {}; return m[p.tier || 'haiku'] || p.model || 'claude-haiku-5-5'; };
+/* a short picture of your money for every question; the tools fetch the detail */
+function aiSnapshot() {
+  const now = isoDate(today()), cur = mk(today()), p = monthPeriod(cur), tt = totalsP(p), cash = cashNow(), f = forecast();
+  const cats = catRows(p, 'expense').filter(r => r.planned || r.actual).map(r => ({ category: r.name, plan: r.planned, spent: r.actual }));
+  const debts = (config.debts || []).length ? debtRows().map(d => ({ name: d.name, balance: d.bal, rate: +d.rate || null, repayment: +d.repay || null, every: d.freq || null, payoff: d.payoff })) : [];
+  const st = savingsState(), cs = isHH() ? null : commissionStats();
+  return {
+    today: now, weekday: new Date().toLocaleDateString('en-AU', { weekday: 'long' }),
+    cash_now: cash ? { amount: cash.v, from: cash.src === 'bank' ? 'bank balances' : 'Lagoon records' } : null,
+    safe_to_spend: f ? { amount_until: Math.max(0, f.low), until: f.end, lowest_point: f.low, lowest_on: f.lowDate, runs_out_on: f.neg ? f.neg.date : null, next_pay: f.p1, base_pay: f.pi.base } : null,
+    this_month: { income: tt.inc, spending: tt.exp, borrowed: tt.borrowed, net: tt.net, categories: cats },
+    bills_next_14_days: dueSoon().map(x => ({ name: x.r.name, date: x.date, amount: +x.r.amount, type: x.r.type || 'expense' })),
+    debts, savings: { total: st.bal.v, allocated: st.allocated },
+    commission: cs ? { monthly_average: cs.avg, monthly_low: cs.low } : null,
+    expense_categories: config.expense.map(c => c.name), income_categories: config.income.map(c => c.name)
+  };
+}
+const txOut = t => ({ id: t.id, date: t.date, store: t.desc, amount: +t.amount, type: t.type, category: t.cat, ...(isTransfer(t) ? { transfer: true } : {}), ...(t.pending ? { pending: true } : {}) });
+const AI_TOOLS = [
+  { name: 'search_transactions', description: 'Find transactions. Every word in query must appear in the store name or category. Transfers are left out unless include_transfers is true.', input_schema: { type: 'object', properties: { query: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income', 'any'] }, from: { type: 'string', description: 'YYYY-MM-DD' }, to: { type: 'string', description: 'YYYY-MM-DD' }, include_transfers: { type: 'boolean' }, min_amount: { type: 'number' }, max_amount: { type: 'number' }, limit: { type: 'integer' } } } },
+  { name: 'spending_summary', description: 'Totals by category and top stores between two dates.', input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['from', 'to'] } },
+  { name: 'monthly_totals', description: 'Income, spending, borrowing and the top categories for each of the last N months.', input_schema: { type: 'object', properties: { months: { type: 'integer' } } } },
+  { name: 'cash_forecast', description: 'Day by day forecast of pay, bills and living costs with the running balance.', input_schema: { type: 'object', properties: { days: { type: 'integer' } } } },
+  { name: 'set_category', description: 'Change the category of transactions in Lagoon by id. Only changes Lagoon records.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, category: { type: 'string' } }, required: ['ids', 'category'] } },
+  { name: 'add_store_rule', description: 'Make a rule: stores whose name contains store_text go into category. apply_to_past also changes earlier matching transactions.', input_schema: { type: 'object', properties: { store_text: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] }, apply_to_past: { type: 'boolean' } }, required: ['store_text', 'category'] } },
+  { name: 'set_budget', description: 'Set the monthly plan for a category.', input_schema: { type: 'object', properties: { category: { type: 'string' }, monthly_amount: { type: 'number' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['category', 'monthly_amount'] } },
+  { name: 'mark_transfer', description: 'Mark transactions as transfers, or not, by id.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, is_transfer: { type: 'boolean' } }, required: ['ids', 'is_transfer'] } }
+];
+const findCat = (name, type) => { const n = String(name || '').toLowerCase(), lists = type ? [[type, type === 'income' ? config.income : config.expense]] : [['expense', config.expense], ['income', config.income]]; for (const [t, l] of lists) { const c = l.find(x => x.name.toLowerCase() === n); if (c) return { type: t, name: c.name }; } return null; };
+async function aiTool(name, a) {
+  const all = allTx(), byId = new Map(all.map(t => [String(t.id), t])), changed = new Set();
+  try {
+    if (name === 'search_transactions') {
+      const words = String(a.query || '').toLowerCase().split(/\s+/).filter(Boolean), cat = a.category ? String(a.category).toLowerCase() : '';
+      let list = all.filter(t => (!a.from || t.date >= a.from) && (!a.to || t.date <= a.to) && (!a.type || a.type === 'any' || t.type === a.type) && (a.include_transfers || !isTransfer(t)) && (!cat || t.cat.toLowerCase() === cat) && (a.min_amount == null || +t.amount >= a.min_amount) && (a.max_amount == null || +t.amount <= a.max_amount));
+      if (words.length) list = list.filter(t => { const h = `${t.desc} ${t.cat}`.toLowerCase(); return words.every(w => h.includes(w)); });
+      list.sort((x, y) => y.date.localeCompare(x.date));
+      const lim = Math.min(200, Math.max(1, +a.limit || 40));
+      return { count: list.length, total: round2(list.reduce((s, t) => s + (t.type === 'income' ? +t.amount : -t.amount), 0)), shown: list.length > lim ? lim : list.length, items: list.slice(0, lim).map(txOut) };
+    }
+    if (name === 'spending_summary') {
+      const type = a.type || 'expense', list = all.filter(t => t.type === type && t.date >= a.from && t.date <= a.to && !isBorrowed(t)), by = {}, st = {};
+      for (const t of list) { by[t.cat] = round2((by[t.cat] || 0) + +t.amount); const s = storeName(t.desc); st[s] = round2((st[s] || 0) + +t.amount); }
+      return { total: round2(list.reduce((s, t) => s + +t.amount, 0)), by_category: Object.entries(by).sort((x, y) => y[1] - x[1]).map(([c, v]) => ({ category: c, amount: v })), top_stores: Object.entries(st).sort((x, y) => y[1] - x[1]).slice(0, 12).map(([s, v]) => ({ store: s, amount: v })), transfers_included: list.some(isTransfer) };
+    }
+    if (name === 'monthly_totals') {
+      const n = Math.min(24, Math.max(1, +a.months || 6)), cur = mk(today());
+      return Array.from({ length: n }, (_, i) => addMonths(cur, i - n + 1)).map(k => { const t = totals(k), cs = config.expense.map(c => [c.name, catActual(k, 'expense', c.name)]).filter(x => x[1] > 0).sort((x, y) => y[1] - x[1]).slice(0, 6); return { month: k, ...t, top_categories: Object.fromEntries(cs) }; });
+    }
+    if (name === 'cash_forecast') {
+      const f = forecast({ days: Math.min(120, Math.max(7, +a.days || 30)) }); if (!f) return { error: 'No balance yet. Bank sync or a starting balance is needed.' };
+      const ev = []; let living = 0;
+      for (const e of f.ev) { if (e.living) { living += -e.v; continue; } ev.push({ date: e.date, item: e.name, amount: e.v, balance_after: e.bal }); }
+      return { cash_now: f.cash.v, lowest: f.low, lowest_on: f.lowDate, runs_out_on: f.neg ? f.neg.date : null, living_costs_in_period: round2(living), events: ev };
+    }
+    if (isHH()) return { error: 'Household view is read only. Open a person in Lagoon to make changes.' };
+    if (name === 'set_category') {
+      const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean); if (!ts.length) return { error: 'No matching transaction ids.' };
+      const c = findCat(a.category, ts[0].type); if (!c) return { error: `No ${ts[0].type} category called ${a.category}.` };
+      const ok = ts.filter(t => t.type === c.type), r = setCats(ok, c.name); for (const k of r.touched) changed.add(k);
+      return { changed: r.n, skipped_other_type: ts.length - ok.length };
+    }
+    if (name === 'add_store_rule') {
+      const c = findCat(a.category, a.type); if (!c) return { error: `No category called ${a.category}.` };
+      const r = addRule(a.store_text, c.type, c.name, !!a.apply_to_past); if (!r.key) return { error: 'store_text needs a word from the store name.' };
+      for (const k of r.touched) changed.add(k); return { rule: `${r.key} -> ${c.name}`, changed_past: r.n };
+    }
+    if (name === 'set_budget') {
+      const c = findCat(a.category, a.type); if (!c) return { error: `No category called ${a.category}.` };
+      const item = (c.type === 'income' ? config.income : config.expense).find(x => x.name === c.name); item.planned = round2(Math.abs(+a.monthly_amount || 0));
+      return { category: c.name, monthly_plan: item.planned };
+    }
+    if (name === 'mark_transfer') {
+      const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean);
+      for (const t of ts) { t.transfer = !!a.is_transfer; changed.add(t.date.slice(0, 7)); } return { changed: ts.length };
+    }
+    return { error: 'Unknown tool' };
+  } finally { if (changed.size || /set_budget|add_store_rule/.test(name)) { await saveMonths([...changed]); await saveConfig(); } }
+}
+function aiSystem() {
+  const who = pname(curId), nm = isHH() ? 'the household' : (who && who !== 'Me' ? who : 'the user');
+  return `You are the finance assistant inside Lagoon Finance, ${nm}'s personal money app. Melbourne, Australia. Money is AUD.
+Stay on money: spending, budgets, bills, pay and commission, debts, savings, and purchase decisions. If asked about anything else, say in one sentence that you only help with finances here.
+Use the tools for real figures. Never guess a number. Say when data is missing.
+Reply style: lead with the answer in one line. Keep replies under 120 words unless asked for more. Short sentences, plain words, Australian spelling, no em dashes, no filler or compliments. Replies may be read aloud, so avoid tables, headings and long lists.
+Be honest. Disagree when a plan looks risky, and say why in one line.
+You cannot move money, pay, transfer, borrow or contact anyone. You can change Lagoon records only: categories, store rules, budgets and transfer flags. Say exactly what you changed. Ask before changing more than 20 transactions.
+Snapshot now: ${JSON.stringify(aiSnapshot())}`;
+}
+async function aiCall(key, messages) {
+  const body = { model: aiModel(), max_tokens: 1024, system: aiSystem(), tools: AI_TOOLS, messages };
+  let r = await fetch(`${AI_API}/messages`, { method: 'POST', headers: aiHeaders(key), body: JSON.stringify(body) });
+  if (r.status === 404 || r.status === 400) { const j = await r.clone().json().catch(() => ({})); if (/model/i.test(JSON.stringify(j))) { await aiModels(key); body.model = aiModel(); r = await fetch(`${AI_API}/messages`, { method: 'POST', headers: aiHeaders(key), body: JSON.stringify(body) }); } }
+  if (r.status === 401 || r.status === 403) throw new Error('key');
+  if (r.status === 429 || r.status === 529) throw new Error('busy');
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error((j.error && j.error.message) || 'http' + r.status); }
+  return r.json();
+}
+async function aiAsk(text, spoken) {
+  const key = keysGet().anthropic; if (!key) { openAiSheet(); return; }
+  if (aiBusy || !text.trim()) return;
+  aiBusy = true; aiStatus = 'Thinking…';
+  chat.push({ role: 'user', text: text.trim(), at: Date.now() }); chatSave(); askRefresh();
+  const msgs = chat.slice(-20).filter(m => m.text).map(m => ({ role: m.role, content: m.text }));
+  while (msgs.length && msgs[0].role !== 'user') msgs.shift();
+  let reply = '', did = [];
+  try {
+    for (let round = 0; round < 8; round++) {
+      const res = await aiCall(key, msgs), blocks = res.content || [];
+      const txt = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (res.stop_reason !== 'tool_use') { reply = txt; break; }
+      msgs.push({ role: 'assistant', content: blocks });
+      const results = [];
+      for (const b of blocks.filter(b => b.type === 'tool_use')) { aiStatus = b.name === 'search_transactions' ? 'Looking through transactions…' : /set_|add_|mark_/.test(b.name) ? 'Updating Lagoon…' : 'Checking your numbers…'; askRefresh(true); const out = await aiTool(b.name, b.input || {}); if (/set_|add_|mark_/.test(b.name) && !out.error) did.push(b.name); results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) }); }
+      msgs.push({ role: 'user', content: results });
+    }
+    if (!reply) reply = 'I could not finish that one. Try asking it a simpler way.';
+  } catch (err) {
+    reply = err.message === 'key' ? 'Anthropic did not accept your key. Check it in assistant settings.' : err.message === 'busy' ? 'Claude is busy right now. Try again in a minute.' : /failed to fetch|network|load failed/i.test(err.message) ? 'No internet connection right now.' : `Something went wrong: ${err.message}`;
+  }
+  chat.push({ role: 'assistant', text: reply, at: Date.now() }); chatSave();
+  aiBusy = false; aiStatus = '';
+  if (did.length && ui.tab !== 'ask') render();
+  askRefresh(); if (spoken || aiPrefs().speak) speak(reply, spoken);
+}
+/* ---------- voice: your iPhone turns speech into text, Claude writes the reply, the voice you picked reads it ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+const voices = () => { try { return (speechSynthesis.getVoices() || []).filter(v => /^en/i.test(v.lang)); } catch { return []; } };
+const voiceRank = v => (/premium/i.test(v.name) ? 0 : /enhanced/i.test(v.name) ? 1 : 2) + (/en-AU/i.test(v.lang) ? 0 : .5);
+function pickVoice() { const vs = voices(), want = aiPrefs().voice; return vs.find(v => v.voiceURI === want) || vs.slice().sort((a, b) => voiceRank(a) - voiceRank(b))[0] || null; }
+const speakText = t => String(t || '').replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim();
+function speak(text, thenListen) {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(speakText(text)), v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-AU';
+    u.rate = +aiPrefs().rate || 1;
+    u.onend = () => { if (thenListen && aiPrefs().handsFree && ui.tab === 'ask' && !document.hidden) setTimeout(listen, 350); };
+    speechSynthesis.speak(u);
+  } catch {}
+}
+/* iPhones only let a page talk after a tap, so the first tap on the microphone wakes the voice */
+function unlockVoice() { try { if (!window.__lfVoice) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); window.__lfVoice = true; } } catch {} }
+function listen() {
+  if (listening) { try { rec.stop(); } catch {} return; }
+  if (!SR) { toast('Voice typing is not available here. Tap the text box and use the microphone on your keyboard.'); const i = $('askIn'); if (i) i.focus(); return; }
+  unlockVoice(); try { speechSynthesis.cancel(); } catch {}
+  rec = new SR(); rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  let said = '';
+  rec.onresult = e => { said = [...e.results].map(r => r[0].transcript).join(' '); const i = $('askIn'); if (i) i.value = said; };
+  rec.onerror = e => { listening = false; askMic(); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Lagoon needs microphone and speech recognition access. Allow it in Settings, or use the keyboard microphone.'); };
+  rec.onend = () => { listening = false; askMic(); const t = said.trim(); if (t) { const i = $('askIn'); if (i) i.value = ''; aiAsk(t, true); } };
+  try { rec.start(); listening = true; askMic(); } catch { listening = false; askMic(); }
+}
+function askMic() { const b = $('askMic'); if (b) { b.setAttribute('aria-pressed', String(listening)); b.setAttribute('aria-label', listening ? 'Stop listening' : 'Speak'); } const s = $('askState'); if (s) s.textContent = listening ? 'Listening…' : aiStatus; }
+const bubbleHTML = m => `<div class="bubble ${m.role === 'user' ? 'me' : 'ai'}">${esc(m.text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>')}</div>`;
+function askRefresh(statusOnly) {
+  const s = $('askState'); if (s) s.textContent = listening ? 'Listening…' : aiStatus;
+  if (statusOnly) return;
+  const l = $('askList'); if (!l) return;
+  l.innerHTML = chat.map(bubbleHTML).join('') || askEmpty();
+  const b = $('askSend'); if (b) b.disabled = aiBusy;
+  requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+}
+const ASK_IDEAS = ['How much have I spent on Uber Eats this month?', 'Can I afford $200 this week?', 'Which bills are due before payday?', 'Which debt should I pay off first?'];
+const askEmpty = () => `<div class="glass empty"><div style="font-weight:700;color:var(--fg)">Ask about your money</div><div class="small">Type or tap the microphone. Try one of these:</div>${ASK_IDEAS.map(q => `<button type="button" class="btn block" data-act="askidea" data-q="${esc(q)}" style="font-size:14px;min-height:44px">${esc(q)}</button>`).join('')}</div>`;
+function viewAsk() {
+  const key = keysGet().anthropic, p = aiPrefs();
+  return `<div class="row between"><button type="button" class="iconbtn" data-act="tab" data-tab="home" aria-label="Back">${I.left}</button><h1 class="h1">Assistant</h1><button type="button" class="link" data-act="aisettings">Settings</button></div>
+  ${key ? `<div id="askList" class="asklist" aria-live="polite">${chat.map(bubbleHTML).join('') || askEmpty()}</div>
+  <div class="askbar glass">
+    <div class="row between tiny muted" style="padding:0 4px"><span id="askState" class="num">${esc(aiStatus)}</span><span class="row" style="gap:12px"><button type="button" class="link small" data-act="askspeak" aria-pressed="${!!p.speak}">${p.speak ? 'Voice on' : 'Voice off'}</button><button type="button" class="link small" data-act="askhands" aria-pressed="${!!p.handsFree}">${p.handsFree ? 'Hands-free on' : 'Hands-free off'}</button></span></div>
+    <div class="row" style="gap:8px"><button type="button" class="micbtn" id="askMic" data-act="askmic" aria-pressed="${listening}" aria-label="Speak"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <input class="input" id="askIn" placeholder="Ask about your money" autocomplete="off" enterkeyhint="send" style="flex:1">
+    <button type="button" class="btn primary" id="askSend" data-act="asksend" ${aiBusy ? 'disabled' : ''} aria-label="Send">Send</button></div></div>`
+  : `<section class="glass card"><div class="h2">Add your Anthropic key</div><div class="note">The assistant uses Claude through your own Anthropic API key. It reads your Lagoon data, answers money questions, and can tidy categories, rules and budgets. It never moves money.</div><button type="button" class="btn primary block" data-act="aisettings">Add key</button></section>`}`;
+}
+function openAiSheet() {
+  const ks = keysGet(), p = aiPrefs(), vs = voices().sort((a, b) => voiceRank(a) - voiceRank(b) || a.name.localeCompare(b.name)), cur = pickVoice(), m = p.models || {};
+  openSheet(`${sheetHead('Assistant settings')}
+  <div class="field"><label for="ai-key">Anthropic API key</label><input class="input" id="ai-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${ks.anthropic ? esc(keyMask(ks.anthropic)) : 'sk-ant-…'}"></div>
+  <div class="note">Create a key at console.anthropic.com under API keys. It stays on this iPhone only: never in Lagoon's code, the GitHub repo, backups or exports.</div>
+  <div class="note" id="formErr" hidden></div>
+  <div class="row" style="gap:8px"><button type="button" class="btn primary" style="flex:1" data-act="aikeysave">${ks.anthropic ? 'Replace and test' : 'Save and test'}</button>${ks.anthropic ? '<button type="button" class="btn danger" data-act="aikeydel">Remove</button>' : ''}</div>
+  <div class="field"><label for="ai-tier">Claude model</label><select class="input" id="ai-tier">${[['haiku', 'Haiku: fastest, lowest cost'], ['sonnet', 'Sonnet: smarter, costs more'], ['opus', 'Opus: smartest, costs most']].map(([v, l]) => `<option value="${v}" ${(p.tier || 'haiku') === v ? 'selected' : ''}>${l}${m[v] ? '' : ''}</option>`).join('')}</select><div class="tiny muted">${esc(aiModel())}</div></div>
+  <div class="h2" style="margin-top:6px">Voice</div>
+  ${vs.length ? `<div class="field"><label for="ai-voice">Reading voice</label><select class="input" id="ai-voice">${vs.map(v => `<option value="${esc(v.voiceURI)}" ${cur && cur.voiceURI === v.voiceURI ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>
+  <div class="field"><label for="ai-rate">Speed</label><select class="input" id="ai-rate">${[['0.9', 'A little slower'], ['1', 'Normal'], ['1.1', 'A little faster']].map(([v, l]) => `<option value="${v}" ${String(p.rate || '1') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+  <button type="button" class="btn block" data-act="aivoicetest">Play a sample</button>` : '<div class="note">No voices found yet. Open this again in a moment.</div>'}
+  <div class="note">For a more natural voice, download one marked Premium or Enhanced: iPhone Settings, Accessibility, Spoken Content, Voices, English. Siri voices can't be used by apps.</div>
+  ${chat.length ? '<button type="button" class="btn danger block" data-act="aiclear">Clear the conversation</button>' : ''}`, { kind: 'ai' });
+}
+
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
@@ -3043,16 +3589,86 @@ document.addEventListener('click', async e => {
       else ui.month = addDaysIso(ui.week, 3).slice(0, 7);
       ui.period = v; storeSet('lf-period', v); render(); break; }
     case 'year': ui.year += +el.dataset.d; render(); break;
-    case 'plantab': ui.tab = 'plan'; ui.planTab = el.dataset.p; render(); break;
+    case 'plantab': { const changed = ui.tab !== 'plan' || ui.planTab !== planKey(el.dataset.p); ui.tab = 'plan'; storeSet('lf-tab', 'plan'); ui.planTab = planKey(el.dataset.p); render(); if (changed) window.scrollTo(0, 0); break; }
     case 'calmonth': ui.calMonth = addMonths(ui.calMonth || mk(today()), +el.dataset.d); ui.calDay = ''; render(); break;
     case 'calday': ui.calDay = el.dataset.d; render(); break;
     case 'cpsel': ui.cpIdx = +el.dataset.i; render(); break;
     case 'filter': ui.filter = el.dataset.f; if (ui.actCat && !ui.actCat.startsWith(ui.filter + '|') && ui.filter !== 'all') ui.actCat = ''; ui.actShow = ACT_PAGE; render(); break;
     case 'actmore': ui.actShow = (ui.actShow || ACT_PAGE) + ACT_PAGE; refreshActivity(); break;
-    case 'actclear': ui.search = ''; ui.filter = 'all'; ui.actCat = ''; ui.actDate = 'period'; ui.actFrom = ui.actTo = ''; ui.actShow = ACT_PAGE; render(); break;
+    case 'actclear': ui.search = ''; ui.filter = 'all'; ui.actType = 'main'; ui.actAcct = ''; ui.actAmt = ''; ui.actSort = 'new'; ui.actCat = ''; ui.actDate = 'period'; ui.actFrom = ui.actTo = ''; ui.actShow = ACT_PAGE; render(); break;
     case 'catview': ui.catView = { type: el.dataset.type, name: el.dataset.name }; ui.tab = 'category'; render(); window.scrollTo(0, 0); break;
     case 'catback': ui.tab = 'plan'; render(); window.scrollTo(0, 0); break;
-    case 'catactivity': { const c = ui.catView || {}; ui.tab = 'activity'; storeSet('lf-tab', 'activity'); ui.search = ''; ui.filter = c.type || 'all'; ui.actCat = `${c.type}|${c.name}`; ui.actDate = 'period'; ui.actShow = ACT_PAGE; render(); window.scrollTo(0, 0); break; }
+    case 'catactivity': { const c = ui.catView || {}; ui.tab = 'activity'; storeSet('lf-tab', 'activity'); ui.search = ''; ui.filter = c.type || 'all'; ui.actType = c.type || 'main'; ui.actCat = `${c.type}|${c.name}`; ui.actDate = 'period'; ui.actShow = ACT_PAGE; render(); window.scrollTo(0, 0); break; }
+    case 'assist': closeSheet(); ui.tab = 'ask'; render(); window.scrollTo(0, document.body.scrollHeight); break;
+    case 'asksend': { const i = $('askIn'); if (!i) break; const t = i.value; i.value = ''; unlockVoice(); aiAsk(t, false); break; }
+    case 'askidea': unlockVoice(); aiAsk(el.dataset.q, false); break;
+    case 'askmic': listen(); break;
+    case 'askspeak': { const on = !aiPrefs().speak; aiPrefsSet({ speak: on }); if (on) unlockVoice(); else try { speechSynthesis.cancel(); } catch {} render(); break; }
+    case 'askhands': { const on = !aiPrefs().handsFree; aiPrefsSet({ handsFree: on }); if (on) unlockVoice(); render(); toast(on ? 'Hands-free on: after a spoken reply, Lagoon listens again.' : 'Hands-free off'); break; }
+    case 'aisettings': openAiSheet(); break;
+    case 'aikeysave': {
+      const v = cleanKey($('ai-key').value) || keysGet().anthropic, err = $('formErr');
+      if (!v) { err.hidden = false; err.textContent = 'Paste your Anthropic API key.'; break; }
+      if (!/^sk-ant-[A-Za-z0-9_-]{10,}$/.test(v)) { err.hidden = false; err.textContent = 'Anthropic keys start with sk-ant-. Check you copied all of it.'; break; }
+      el.disabled = true; el.textContent = 'Testing…';
+      try { await aiModels(v); keysSet({ anthropic: v }); closeSheet(); render(); toast('Key saved and working'); }
+      catch (x) { if (x.message === 'key') { err.hidden = false; err.textContent = 'Anthropic did not accept that key.'; } else { keysSet({ anthropic: v }); err.hidden = false; err.textContent = 'Saved, but Lagoon could not reach Anthropic to test it. Try a question when you are online.'; } el.disabled = false; el.textContent = 'Save and test'; }
+      break; }
+    case 'aikeydel': if (!confirmTap(el, 'Tap again to remove')) break; keysSet({ anthropic: null }); openAiSheet(); render(); toast('Key removed from this iPhone'); break;
+    case 'aivoicetest': unlockVoice(); speak('Hi. This is how your finance assistant will sound.'); break;
+    case 'aiclear': if (!confirmTap(el, 'Tap again to clear')) break; chat = []; chatSave(); closeSheet(); render(); break;
+    case 'pssettings': openPsSheet(); break;
+    case 'pstest': {
+      const v = cleanKey($('ps-key').value) || keysGet().ps, from = $('ps-from').value || addDaysIso(isoDate(today()), -60), err = $('formErr');
+      if (!v) { err.hidden = false; err.textContent = 'Paste your PocketSmith developer key.'; break; }
+      if (!/^[A-Za-z0-9_-]{16,}$/.test(v)) { err.hidden = false; err.textContent = 'That does not look like a developer key. Copy it again from PocketSmith.'; break; }
+      keysSet({ ps: v, psPerson: curId });
+      psConf().from = from; await saveConfig();
+      el.disabled = true; el.textContent = 'Checking…';
+      try { const res = await psSync({ first: true, from }); if (res) openPsPreview(res); } catch { if (sheetCtx && sheetCtx.kind === 'ps') { openPsSheet(); const e2 = $('formErr'); if (e2) { e2.hidden = false; e2.textContent = psConf().err || 'Could not connect.'; } } }
+      break; }
+    case 'psgo': {
+      const res = sheetCtx.res, touched = psApply(res.plan), nA = psAccounts(res.data.accts);
+      Object.assign(psConf(), { on: true, last: Date.now(), err: '' });
+      closeSheet(); render(); await saveMonths([...touched]); await saveConfig(); await applyRecurring();
+      toast(`Connected. Added ${res.plan.add.length} transactions${nA ? ` and updated ${nA} accounts` : ''}`); break; }
+    case 'pssync': psSync({ force: true }); break;
+    case 'psoff': if (!confirmTap(el, 'Tap again to disconnect')) break; keysSet({ ps: null, psPerson: null }); psConf().on = false; await saveConfig(); openPsSheet(); toast('Bank sync off. Key removed from this iPhone.'); break;
+    case 'psmap': openPsMap(sheetCtx && sheetCtx.kind === 'pspreview' ? sheetCtx.res : null); break;
+    case 'psmapsave': case 'psmapapply': {
+      psMapCollect(); const back = sheetCtx.back, touched = new Set(); let n = 0;
+      if (back) for (const t of back.plan.add) t.cat = psCat(t.desc, t.type, t.psc);
+      if (a === 'psmapapply') for (const t of allTx()) if (t.src === 'bank' && t.psc && !t.catSet) { const c = psCat(t.desc, t.type, t.psc); if (c !== t.cat) { t.cat = c; n++; touched.add(t.date.slice(0, 7)); } }
+      await saveConfig(); if (touched.size) await saveMonths([...touched]);
+      if (back) openPsPreview(back); else { closeSheet(); render(); }
+      toast(a === 'psmapapply' ? `Mapping saved. Re-filed ${n} bank line${n === 1 ? '' : 's'}` : 'Mapping saved'); break; }
+    case 'actshowtransfers': ui.actType = 'all'; ui.actShow = ACT_PAGE; render(); break;
+    case 'actselect': ui.sel = new Set(); render(); break;
+    case 'actselend': ui.sel = null; render(); break;
+    case 'actpick': { if (!ui.sel) break; const k = el.dataset.k; if (ui.sel.has(k)) ui.sel.delete(k); else ui.sel.add(k); el.setAttribute('aria-pressed', String(ui.sel.has(k))); const tk = el.querySelector('.tick'); if (tk) tk.textContent = ui.sel.has(k) ? '✓' : ''; const b = $('selBar'); if (b) b.outerHTML = selBar(); break; }
+    case 'actselall': if (ui.sel) { for (const t of actFiltered().slice(0, ui.actShow || ACT_PAGE)) ui.sel.add(selKey(t)); refreshActivity(); } break;
+    case 'actselnone': if (ui.sel) { ui.sel.clear(); refreshActivity(); } break;
+    case 'bulkcat': openBulkCat(); break;
+    case 'bulkcatsave': {
+      const cat = $('bc-cat').value; if (!cat) { toast('Choose a category.'); break; }
+      const type = sheetCtx.type, list = selected().filter(t => t.type === type), r = setCats(list, cat);
+      let extra = 0;
+      if (sheetCtx.store && $('bc-rule') && $('bc-rule').checked) { const ar = addRule(list[0].desc, type, cat, !!($('bc-past') && $('bc-past').checked)); extra = ar.n; for (const k of ar.touched) r.touched.add(k); }
+      ui.sel = null; closeSheet(); render(); await saveMonths([...r.touched]); await saveConfig();
+      toast(`Moved ${list.length} to ${cat}${extra ? ` and ${extra} earlier ones` : ''}`); break; }
+    case 'bulktransfer': {
+      const list = selected(); if (!list.length) break; const to = !list.every(isTransfer), touched = new Set();
+      for (const t of list) { t.transfer = to; touched.add(t.date.slice(0, 7)); }
+      ui.sel = null; render(); await saveMonths([...touched]);
+      toast(to ? `Marked ${list.length} as transfers. Search hides them unless you pick Transfers.` : `${list.length} no longer marked as transfers`); break; }
+    case 'rulenew': openRuleSheet(); break;
+    case 'ruletype': { sheetCtx.type = el.dataset.t; el.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === el))); $('rl-cat').innerHTML = catOptions(sheetCtx.type, ''); break; }
+    case 'rulesave': {
+      const text = $('rl-text').value.trim(), cat = $('rl-cat').value, err = $('formErr');
+      if (!normKey(text) || !cat) { err.hidden = false; err.textContent = !normKey(text) ? 'Enter a word from the store name.' : 'Choose a category.'; break; }
+      const r = addRule(text, sheetCtx.type, cat, $('rl-past').checked);
+      closeSheet(); render(); await saveMonths([...r.touched]); await saveConfig();
+      toast(`Rule saved${r.n ? `. Changed ${r.n} transaction${r.n === 1 ? '' : 's'}` : ''}`); if ($('sheet').hidden) openCategories(); break; }
     case 'add': if (mode !== 'wait') openTxSheet(); break;
     case 'close': closeSheet(); break;
     case 'toastaction': { const a = toastAction; toastAction = null; $('toast').hidden = true; if (a) a.run(); break; }
@@ -3060,7 +3676,7 @@ document.addEventListener('click', async e => {
     case 'edit': { const sr = el.closest('.swipe'); if (sr && sr.dataset.swiped) break; if (sr && SW.open === sr) { swipeClose(sr); break; } const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxDetail(t); break; }
     case 'txdetail': { const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxDetail(t); break; }
     case 'txedit': { const t = txOf(el.dataset.m).find(x => x.id === el.dataset.id); if (t) openTxSheet(t); break; }
-    case 'txrecat': { const cat = $('td-cat').value; if (!cat) break; const ids = new Set(sheetCtx.ids), touched = new Set(); let n = 0, sample = null; for (const t of allTx()) if (ids.has(t.id) && t.cat !== cat) { t.cat = cat; n++; sample = t; touched.add(t.date.slice(0, 7)); } if (sample) learn(sample.desc, sample.type, cat); const first = allTx().find(x => ids.has(x.id)); closeSheet(); render(); await saveMonths([...touched]); await saveConfig(); toast(`Moved ${n} to ${cat}`); if (first) openTxDetail(first); break; }
+    case 'txrecat': { const cat = $('td-cat').value; if (!cat) break; const ids = new Set(sheetCtx.ids), touched = new Set(); let n = 0, sample = null; for (const t of allTx()) if (ids.has(t.id) && t.cat !== cat) { t.cat = cat; t.catSet = true; n++; sample = t; touched.add(t.date.slice(0, 7)); } if (sample) learn(sample.desc, sample.type, cat); const first = allTx().find(x => ids.has(x.id)); closeSheet(); render(); await saveMonths([...touched]); await saveConfig(); toast(`Moved ${n} to ${cat}`); if (first) openTxDetail(first); break; }
     case 'settype': {
       sheetCtx.type = el.dataset.t;
       el.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
@@ -3170,9 +3786,15 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.id === 'ai-tier') { aiPrefsSet({ tier: el.value }); openAiSheet(); return; }
+  if (el.id === 'ai-voice') { aiPrefsSet({ voice: el.value }); return; }
+  if (el.id === 'ai-rate') { aiPrefsSet({ rate: el.value }); return; }
+  if (el.dataset && el.dataset.psmap) return;
   if (isHH() && !/^(act-|pn-)/.test(el.id || '')) { render(); toast('Household is view only. Open a person to change this.'); return; }
   if (el.id === 'act-cat') { ui.actCat = el.value; ui.actShow = ACT_PAGE; render(); return; }
   if (el.id === 'act-date') { ui.actDate = el.value; ui.actShow = ACT_PAGE; render(); return; }
+  if (el.id === 'act-type') { ui.actType = el.value; if (ui.actCat && (el.value === 'expense' || el.value === 'income') && !ui.actCat.startsWith(el.value + '|')) ui.actCat = ''; ui.actShow = ACT_PAGE; render(); return; }
+  if (el.id === 'act-acct' || el.id === 'act-amt' || el.id === 'act-sort') { ui[{ 'act-acct': 'actAcct', 'act-amt': 'actAmt', 'act-sort': 'actSort' }[el.id]] = el.value; ui.actShow = ACT_PAGE; render(); return; }
   if (el.id === 'act-from' || el.id === 'act-to') { ui[el.id === 'act-from' ? 'actFrom' : 'actTo'] = el.value; ui.actShow = ACT_PAGE; refreshActivity(); return; }
   if (el.id === 'f-cat' && sheetCtx) { sheetCtx.catTouched = !!el.value; const h = $('catHint'); if (h) h.hidden = true; if (sheetCtx.items) renderSplit(); }
   else if (el.id === 'split-on' && sheetCtx) sheetCtx.splitOn = el.checked;
@@ -3187,8 +3809,12 @@ document.addEventListener('change', async e => {
   else if (el.dataset.map && sheetCtx && sheetCtx.kind === 'import') { const k = el.dataset.map; sheetCtx.map[k] = (k === 'fmt' || k === 'sign') ? el.value : +el.value; openImport(sheetCtx); }
   else if (el.dataset.plan) { const v = parseMoney(el.value); config[el.dataset.plan][+el.dataset.i].planned = isFinite(v) ? Math.abs(round2(v / (+el.dataset.f || 1))) : 0; render(); await saveConfig(); }
 });
-document.addEventListener('toggle', e => { if (e.target.id === 'splitItems' && sheetCtx) sheetCtx.itemsOpen = e.target.open; }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); });
+document.addEventListener('toggle', e => { if (e.target.id === 'splitItems' && sheetCtx) sheetCtx.itemsOpen = e.target.open; else if (e.target.dataset && e.target.dataset.fold) ui.folds[e.target.dataset.fold] = e.target.open; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); else if (e.key === 'Enter' && e.target.id === 'askIn') { e.preventDefault(); const b = $('askSend'); if (b && !b.disabled) b.click(); } });
+try { speechSynthesis.onvoiceschanged = () => { if (sheetCtx && sheetCtx.kind === 'ai') openAiSheet(); }; } catch {}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) psSync(); else if (listening) try { rec.stop(); } catch {} });
+setInterval(() => { if (!document.hidden) psSync(); }, 15 * 60000);
+setTimeout(() => psSync(), 1500);
 
 $('addBtn').disabled = true;
 initStore();

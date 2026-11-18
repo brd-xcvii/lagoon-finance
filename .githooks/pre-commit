@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Blocks a commit that contains an API key. Turn on with: git config core.hooksPath .githooks
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$files" ] && exit 0
+exec scripts/check-keys.sh $files
