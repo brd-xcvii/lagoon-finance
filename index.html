@@ -3195,15 +3195,17 @@ async function psFetch(path, key) {
   let r; try { r = await fetch(PS_API + path, { headers: { 'X-Developer-Key': key, Accept: 'application/json' }, cache: 'no-store' }); } catch { throw new Error('offline'); }
   if (r.status === 401 || r.status === 403) throw new Error('key');
   if (r.status === 429) throw new Error('busy');
-  if (!r.ok) throw new Error('http' + r.status);
-  return r.json();
+  if (!r.ok) { const j = await r.json().catch(() => ({})); const er = new Error('http'); er.detail = `PocketSmith said: ${j.error || 'error ' + r.status}`; throw er; }
+  const body = await r.json(); body.__total = +r.headers.get('Total') || 0; return body;
 }
-async function psPull(key, from) {
-  const me = await psFetch('/me', key);
+async function psPull(key, from, since, uid) {
+  const me = uid ? { id: uid } : await psFetch('/me', key);
   const accts = await psFetch(`/users/${me.id}/transaction_accounts`, key);
-  const tx = [];
-  for (let page = 1; page <= 60; page++) { const b = await psFetch(`/users/${me.id}/transactions?start_date=${from}&per_page=100&page=${page}`, key); tx.push(...b); if (b.length < 100) break; }
-  return { me, accts, tx, from };
+  // PocketSmith needs an end date whenever a start date is sent
+  const to = addDaysIso(isoDate(today()), 1), tx = [];
+  const q = since ? `updated_since=${encodeURIComponent(new Date(since).toISOString())}` : `start_date=${from}&end_date=${to}`;
+  for (let page = 1; page <= 60; page++) { const b = await psFetch(`/users/${me.id}/transactions?${q}&per_page=100&page=${page}`, key); tx.push(...b); if (b.length < 100 || (b.__total && tx.length >= b.__total)) break; }
+  return { me, accts, tx, from: since ? null : from };
 }
 /* work out what a pull would change, without changing anything yet */
 function psPlan(data) {
@@ -3284,16 +3286,19 @@ async function psSync(opt = {}) {
   if (!key || psBusy || !pdata[pid]) return;
   const pc = withPerson(pid, () => psConf());
   if (!pc.on && !opt.first) return;
-  if (!opt.force && !opt.first && pc.last && Date.now() - pc.last < 10 * 60000) return;
+  if (!opt.force && !opt.first && pc.last && Date.now() - pc.last < 45000) return;
   psBusy = true; const st = $('psStatus'); if (st) st.textContent = 'Syncing…';
   try {
     const from = opt.from || (pc.on && pc.last ? addDaysIso(isoDate(today()), -21) : pc.from || addDaysIso(isoDate(today()), -60));
-    const data = await psPull(key, from);
+    const light = pc.on && pc.last && pc.full && Date.now() - pc.full < 30 * 60000 && !opt.force && !opt.first;
+    let data;
+    try { data = await psPull(key, from, light ? pc.last - 5 * 60000 : 0, pc.uid); }
+    catch (x) { if (!light || x.message !== 'http') throw x; data = await psPull(key, addDaysIso(isoDate(today()), -21), 0, pc.uid); }
     if (opt.first) { psBusy = false; return withPerson(pid, () => ({ plan: psPlan(data), data })); }
     let msg = '';
     withPerson(pid, () => {
       const plan = psPlan(data), touched = psApply(plan), nA = psAccounts(data.accts), c = psConf();
-      c.last = Date.now(); c.err = ''; saveLocal();
+      c.uid = data.me.id; c.last = Date.now(); if (data.from) c.full = c.last; c.err = ''; saveLocal();
       if (plan.add.length || opt.force) msg = plan.add.length ? `${plan.add.length} new transaction${plan.add.length === 1 ? '' : 's'} from your bank` : `Bank sync done${nA ? ', balances updated' : ''}`;
       return touched;
     });
@@ -3301,7 +3306,7 @@ async function psSync(opt = {}) {
     if (msg) toast(msg);
     if (!isHH()) await applyRecurring();
   } catch (err) {
-    const why = err.message === 'key' ? 'PocketSmith did not accept the developer key.' : err.message === 'offline' ? 'No internet, so bank sync is waiting.' : err.message === 'busy' ? 'PocketSmith is busy. Lagoon will try again soon.' : 'Bank sync could not finish. Lagoon will try again soon.';
+    const why = err.message === 'key' ? 'PocketSmith did not accept the developer key.' : err.message === 'offline' ? 'No internet, so bank sync is waiting.' : err.message === 'busy' ? 'PocketSmith is busy. Lagoon will try again soon.' : `Bank sync could not finish. ${err.detail || 'App error: ' + err.message}`;
     withPerson(pid, () => { psConf().err = why; saveLocal(); });
     if (opt.force || opt.first) toast(why);
     if (sheetCtx && sheetCtx.kind === 'ps') openPsSheet();
@@ -3337,7 +3342,7 @@ function openPsPreview(res) {
     <div class="row between small"><span>Moves between your own accounts, skipped</span><b class="num">${p.own}</b></div>
     <div class="row between small"><span>Accounts to update</span><b class="num">${accts.length}</b></div></section>
   ${sample.length ? `<div class="h2">Latest new lines</div><div class="list">${sample.map(t => `<div class="row between small" style="min-height:44px;border-bottom:1px solid var(--divider);gap:8px"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortDay(t.date))} · ${esc(t.desc)}<br><span class="tiny muted">${esc(t.cat)}${t.transfer ? ' · Transfer' : ''}</span></span><span class="num" style="font-weight:700">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span></div>`).join('')}</div>` : ''}
-  <div class="note">After this, Lagoon syncs by itself when you open it. You can change the category mapping at any time.</div>
+  <div class="note">After this, Lagoon checks for new transactions every minute while it's open, and straight away when you open it. You can change the category mapping at any time.</div>
   <button type="button" class="btn primary block" data-act="psgo">Connect and add ${p.add.length}</button>
   <button type="button" class="btn block" data-act="psmap">Category mapping first</button>`, { kind: 'pspreview', res });
 }
@@ -3629,7 +3634,7 @@ document.addEventListener('click', async e => {
       break; }
     case 'psgo': {
       const res = sheetCtx.res, touched = psApply(res.plan), nA = psAccounts(res.data.accts);
-      Object.assign(psConf(), { on: true, last: Date.now(), err: '' });
+      Object.assign(psConf(), { on: true, uid: res.data.me.id, last: Date.now(), full: Date.now(), err: '' });
       closeSheet(); render(); await saveMonths([...touched]); await saveConfig(); await applyRecurring();
       toast(`Connected. Added ${res.plan.add.length} transactions${nA ? ` and updated ${nA} accounts` : ''}`); break; }
     case 'pssync': psSync({ force: true }); break;
@@ -3813,7 +3818,7 @@ document.addEventListener('toggle', e => { if (e.target.id === 'splitItems' && s
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); else if (e.key === 'Enter' && e.target.id === 'askIn') { e.preventDefault(); const b = $('askSend'); if (b && !b.disabled) b.click(); } });
 try { speechSynthesis.onvoiceschanged = () => { if (sheetCtx && sheetCtx.kind === 'ai') openAiSheet(); }; } catch {}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) psSync(); else if (listening) try { rec.stop(); } catch {} });
-setInterval(() => { if (!document.hidden) psSync(); }, 15 * 60000);
+setInterval(() => { if (!document.hidden) psSync(); }, 60000);
 setTimeout(() => psSync(), 1500);
 
 $('addBtn').disabled = true;
