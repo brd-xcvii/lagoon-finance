@@ -395,7 +395,7 @@ function mergeConfig(d) {
   if (!c.accounts || typeof c.accounts !== 'object' || Array.isArray(c.accounts)) c.accounts = {};
   return c;
 }
-const HH_OK = new Set(['actshowtransfers', 'assist', 'asksend', 'askidea', 'askmic', 'askspeak', 'askhands', 'aisettings', 'aikeysave', 'aikeydel', 'aivoicetest', 'aiclear', 'tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'fcliving', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
+const HH_OK = new Set(['ttsengine', 'elkeysave', 'elkeydel', 'actshowtransfers', 'assist', 'asksend', 'askidea', 'askmic', 'askspeak', 'askhands', 'aisettings', 'aikeysave', 'aikeydel', 'aivoicetest', 'aiclear', 'tab', 'month', 'period', 'plantab', 'filter', 'actmore', 'actclear', 'catview', 'catback', 'catactivity', 'calmonth', 'calday', 'forecast', 'fcdays', 'fccomm', 'fcliving', 'edit', 'txdetail', 'close', 'year', 'tmonth', 'skin', 'icon', 'copyurl', 'people', 'personpick', 'peoplesave', 'report', 'reportgo', 'reportshare', 'reportclose', 'backup', 'exportjson', 'exportcsv', 'snaprestore', 'backupnow', 'backuplater', 'toastaction', 'restoreall']);
 /* a risky button asks for a second tap */
 function confirmTap(el, msg) { if (el.dataset.armed) return true; el.dataset.armed = '1'; el.textContent = msg; setTimeout(() => { delete el.dataset.armed; }, 4000); return false; }
 /* ---------- people: each person has their own data; Household joins them, view only ---------- */
@@ -3503,6 +3503,44 @@ async function aiAsk(text, spoken) {
   if (did.length && ui.tab !== 'ask') render();
   askRefresh(); if (spoken || aiPrefs().speak) speak(reply, spoken);
 }
+/* ---------- ElevenLabs voice: Claude writes the words, ElevenLabs speaks them. Falls back to the iPhone voice if it fails. ---------- */
+const EL_API = 'https://api.elevenlabs.io';
+const elOn = () => !!keysGet().eleven && aiPrefs().ttsEngine !== 'iphone' && !!aiPrefs().elVoice;
+const elHeaders = key => ({ 'xi-api-key': key, 'content-type': 'application/json' });
+async function elSetup(key) {
+  const vr = await fetch(`${EL_API}/v1/voices`, { headers: elHeaders(key) });
+  if (vr.status === 401 || vr.status === 403) throw new Error('key');
+  if (!vr.ok) throw new Error('http' + vr.status);
+  const voicesList = ((await vr.json()).voices || []).map(v => ({ id: v.voice_id, name: v.name, cat: v.category || '', accent: (v.labels && (v.labels.accent || v.labels.gender)) || '' }));
+  let models = [];
+  try { const mr = await fetch(`${EL_API}/v1/models`, { headers: elHeaders(key) }); if (mr.ok) models = (await mr.json()).filter(m => m.can_do_text_to_speech !== false).map(m => m.model_id); } catch {}
+  const has = id => !models.length || models.includes(id);
+  const fast = ['eleven_flash_v2_5', 'eleven_turbo_v2_5', 'eleven_flash_v2'].find(has) || models[0] || 'eleven_flash_v2_5';
+  const natural = ['eleven_v3', 'eleven_multilingual_v2'].find(has) || fast;
+  const p = aiPrefs(), keep = voicesList.some(v => v.id === p.elVoice);
+  aiPrefsSet({ elVoices: voicesList, elFast: fast, elNatural: natural, elVoice: keep ? p.elVoice : (voicesList[0] || {}).id || '', ttsEngine: 'eleven' });
+  return voicesList.length;
+}
+/* ElevenLabs audio plays through Web Audio. An iPhone allows that once a tap has woken it, so the first tap plays a moment of silence. */
+let elCtx = null, elSrc = null;
+function elContext() { if (!elCtx) { const C = window.AudioContext || window.webkitAudioContext; if (C) elCtx = new C(); } return elCtx; }
+function elUnlock() { try { const c = elContext(); if (!c) return; if (c.state === 'suspended') c.resume(); const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch {} }
+async function elSpeak(text, thenListen) {
+  const key = keysGet().eleven, p = aiPrefs(), model = p.elQuality === 'natural' ? p.elNatural : p.elFast;
+  const r = await fetch(`${EL_API}/v1/text-to-speech/${encodeURIComponent(p.elVoice)}?output_format=mp3_44100_128`, { method: 'POST', headers: { ...elHeaders(key), accept: 'audio/mpeg' }, body: JSON.stringify({ text: speakText(text).slice(0, 2500), model_id: model || 'eleven_flash_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: Math.min(1.2, Math.max(0.8, +p.rate || 1)) } }) });
+  if (r.status === 401 || r.status === 403) throw new Error('key');
+  if (r.status === 429) throw new Error('busy');
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error((j.detail && (j.detail.message || j.detail.status)) || 'http' + r.status); }
+  const c = elContext(); if (!c) throw new Error('no audio');
+  if (c.state === 'suspended') await c.resume();
+  const buf = await new Promise((ok, bad) => { r.arrayBuffer().then(ab => c.decodeAudioData(ab, ok, bad)).catch(bad); });
+  try { if (elSrc) elSrc.stop(); } catch {}
+  const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination); elSrc = src;
+  src.onended = () => { if (elSrc !== src) return; elSrc = null; if (thenListen && aiPrefs().handsFree && ui.tab === 'ask' && !document.hidden) setTimeout(listen, 350); };
+  src.start(0);
+}
+function stopTalking() { try { speechSynthesis.cancel(); } catch {} try { if (elSrc) { const s = elSrc; elSrc = null; s.stop(); } } catch {} }
+
 /* ---------- voice: your iPhone turns speech into text, Claude writes the reply, the voice you picked reads it ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
@@ -3511,6 +3549,10 @@ const voiceRank = v => (/premium/i.test(v.name) ? 0 : /enhanced/i.test(v.name) ?
 function pickVoice() { const vs = voices(), want = aiPrefs().voice; return vs.find(v => v.voiceURI === want) || vs.slice().sort((a, b) => voiceRank(a) - voiceRank(b))[0] || null; }
 const speakText = t => String(t || '').replace(/[*_#`>|]/g, '').replace(/\s+/g, ' ').trim();
 function speak(text, thenListen) {
+  if (elOn()) { elSpeak(text, thenListen).catch(err => { toast(err.message === 'key' ? 'ElevenLabs did not accept your key. Using the iPhone voice.' : err.message === 'busy' ? 'ElevenLabs is busy or out of credits. Using the iPhone voice.' : `ElevenLabs could not speak (${err.message}). Using the iPhone voice.`); iphoneSpeak(text, thenListen); }); return; }
+  iphoneSpeak(text, thenListen);
+}
+function iphoneSpeak(text, thenListen) {
   if (!('speechSynthesis' in window)) return;
   try {
     speechSynthesis.cancel();
@@ -3521,11 +3563,11 @@ function speak(text, thenListen) {
   } catch {}
 }
 /* iPhones only let a page talk after a tap, so the first tap on the microphone wakes the voice */
-function unlockVoice() { try { if (!window.__lfVoice) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); window.__lfVoice = true; } } catch {} }
+function unlockVoice() { elUnlock(); try { if (!window.__lfVoice) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); window.__lfVoice = true; } } catch {} }
 function listen() {
   if (listening) { try { rec.stop(); } catch {} return; }
   if (!SR) { toast('Voice typing is not available here. Tap the text box and use the microphone on your keyboard.'); const i = $('askIn'); if (i) i.focus(); return; }
-  unlockVoice(); try { speechSynthesis.cancel(); } catch {}
+  unlockVoice(); stopTalking();
   rec = new SR(); rec.lang = 'en-AU'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
   let said = '';
   rec.onresult = e => { said = [...e.results].map(r => r[0].transcript).join(' '); const i = $('askIn'); if (i) i.value = said; };
@@ -3565,10 +3607,17 @@ function openAiSheet() {
   <div class="row" style="gap:8px"><button type="button" class="btn primary" style="flex:1" data-act="aikeysave">${ks.anthropic ? 'Replace and test' : 'Save and test'}</button>${ks.anthropic ? '<button type="button" class="btn danger" data-act="aikeydel">Remove</button>' : ''}</div>
   <div class="field"><label for="ai-tier">Claude model</label><select class="input" id="ai-tier">${[['haiku', 'Haiku: fastest, lowest cost'], ['sonnet', 'Sonnet: smarter, costs more'], ['opus', 'Opus: smartest, costs most']].map(([v, l]) => `<option value="${v}" ${(p.tier || 'haiku') === v ? 'selected' : ''}>${l}${m[v] ? '' : ''}</option>`).join('')}</select><div class="tiny muted">${esc(aiModel())}</div></div>
   <div class="h2" style="margin-top:6px">Voice</div>
-  ${vs.length ? `<div class="field"><label for="ai-voice">Reading voice</label><select class="input" id="ai-voice">${vs.map(v => `<option value="${esc(v.voiceURI)}" ${cur && cur.voiceURI === v.voiceURI ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>
-  <div class="field"><label for="ai-rate">Speed</label><select class="input" id="ai-rate">${[['0.9', 'A little slower'], ['1', 'Normal'], ['1.1', 'A little faster']].map(([v, l]) => `<option value="${v}" ${String(p.rate || '1') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-  <button type="button" class="btn block" data-act="aivoicetest">Play a sample</button>` : '<div class="note">No voices found yet. Open this again in a moment.</div>'}
-  <div class="note">For a more natural voice, download one marked Premium or Enhanced: iPhone Settings, Accessibility, Spoken Content, Voices, English. Siri voices can't be used by apps.</div>
+  <div class="seg" role="group" aria-label="Voice engine">${[['eleven', 'ElevenLabs'], ['iphone', 'iPhone voice']].map(([v, l]) => `<button type="button" data-act="ttsengine" data-v="${v}" aria-pressed="${(p.ttsEngine || (ks.eleven ? 'eleven' : 'iphone')) === v}">${l}</button>`).join('')}</div>
+  ${(p.ttsEngine || (ks.eleven ? 'eleven' : 'iphone')) === 'eleven' ? `
+  <div class="field"><label for="el-key">ElevenLabs API key</label><input class="input" id="el-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${ks.eleven ? esc(keyMask(ks.eleven)) : 'sk_…'}"></div>
+  <div class="note">Create one at elevenlabs.io under Developers, then API keys. Give it text to speech and voices access. It stays on this iPhone only.</div>
+  <div class="note" id="elErr" hidden></div>
+  <div class="row" style="gap:8px"><button type="button" class="btn primary" style="flex:1" data-act="elkeysave">${ks.eleven ? 'Replace and test' : 'Save and test'}</button>${ks.eleven ? '<button type="button" class="btn danger" data-act="elkeydel">Remove</button>' : ''}</div>
+  ${ks.eleven && (p.elVoices || []).length ? `<div class="field"><label for="el-voice">ElevenLabs voice</label><select class="input" id="el-voice">${p.elVoices.map(v => `<option value="${esc(v.id)}" ${p.elVoice === v.id ? 'selected' : ''}>${esc(v.name)}${v.accent ? ' · ' + esc(v.accent) : ''}${v.cat && v.cat !== 'premade' ? ' · ' + esc(v.cat) : ''}</option>`).join('')}</select><div class="tiny muted">Voices you add or design in ElevenLabs show here. Tap Replace and test to refresh the list.</div></div>
+  <div class="field"><label for="el-quality">Reply speed</label><select class="input" id="el-quality">${[['fast', 'Fastest replies'], ['natural', 'Most natural, a little slower']].map(([v, l]) => `<option value="${v}" ${(p.elQuality || 'fast') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}`
+  : vs.length ? `<div class="field"><label for="ai-voice">Reading voice</label><select class="input" id="ai-voice">${vs.map(v => `<option value="${esc(v.voiceURI)}" ${cur && cur.voiceURI === v.voiceURI ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>` : '<div class="note">No iPhone voices found yet. Open this again in a moment.</div>'}
+  <div class="field"><label for="ai-rate">Speaking speed</label><select class="input" id="ai-rate">${[['0.9', 'A little slower'], ['1', 'Normal'], ['1.1', 'A little faster']].map(([v, l]) => `<option value="${v}" ${String(p.rate || '1') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+  <button type="button" class="btn block" data-act="aivoicetest">Play a sample</button>
   ${chat.length ? '<button type="button" class="btn danger block" data-act="aiclear">Clear the conversation</button>' : ''}`, { kind: 'ai' });
 }
 
@@ -3608,7 +3657,7 @@ document.addEventListener('click', async e => {
     case 'asksend': { const i = $('askIn'); if (!i) break; const t = i.value; i.value = ''; unlockVoice(); aiAsk(t, false); break; }
     case 'askidea': unlockVoice(); aiAsk(el.dataset.q, false); break;
     case 'askmic': listen(); break;
-    case 'askspeak': { const on = !aiPrefs().speak; aiPrefsSet({ speak: on }); if (on) unlockVoice(); else try { speechSynthesis.cancel(); } catch {} render(); break; }
+    case 'askspeak': { const on = !aiPrefs().speak; aiPrefsSet({ speak: on }); if (on) unlockVoice(); else stopTalking(); render(); break; }
     case 'askhands': { const on = !aiPrefs().handsFree; aiPrefsSet({ handsFree: on }); if (on) unlockVoice(); render(); toast(on ? 'Hands-free on: after a spoken reply, Lagoon listens again.' : 'Hands-free off'); break; }
     case 'aisettings': openAiSheet(); break;
     case 'aikeysave': {
@@ -3621,6 +3670,16 @@ document.addEventListener('click', async e => {
       break; }
     case 'aikeydel': if (!confirmTap(el, 'Tap again to remove')) break; keysSet({ anthropic: null }); openAiSheet(); render(); toast('Key removed from this iPhone'); break;
     case 'aivoicetest': unlockVoice(); speak('Hi. This is how your finance assistant will sound.'); break;
+    case 'ttsengine': aiPrefsSet({ ttsEngine: el.dataset.v }); openAiSheet(); break;
+    case 'elkeysave': {
+      const v = cleanKey($('el-key').value) || keysGet().eleven, err = $('elErr');
+      if (!v) { err.hidden = false; err.textContent = 'Paste your ElevenLabs API key.'; break; }
+      if (!/^[A-Za-z0-9_-]{20,}$/.test(v)) { err.hidden = false; err.textContent = 'That does not look like an ElevenLabs key. Copy it again.'; break; }
+      el.disabled = true; el.textContent = 'Testing…'; unlockVoice();
+      try { const n = await elSetup(v); keysSet({ eleven: v }); openAiSheet(); toast(n ? `ElevenLabs connected. ${n} voices found.` : 'ElevenLabs connected, but no voices were found.'); }
+      catch (x) { err.hidden = false; err.textContent = x.message === 'key' ? 'ElevenLabs did not accept that key. Check it has voices and text to speech access.' : 'Could not reach ElevenLabs. Check your internet and try again.'; el.disabled = false; el.textContent = 'Save and test'; }
+      break; }
+    case 'elkeydel': if (!confirmTap(el, 'Tap again to remove')) break; keysSet({ eleven: null }); aiPrefsSet({ ttsEngine: 'iphone' }); openAiSheet(); toast('ElevenLabs key removed from this iPhone'); break;
     case 'aiclear': if (!confirmTap(el, 'Tap again to clear')) break; chat = []; chatSave(); closeSheet(); render(); break;
     case 'pssettings': openPsSheet(); break;
     case 'pstest': {
@@ -3794,6 +3853,8 @@ document.addEventListener('change', async e => {
   if (el.id === 'ai-tier') { aiPrefsSet({ tier: el.value }); openAiSheet(); return; }
   if (el.id === 'ai-voice') { aiPrefsSet({ voice: el.value }); return; }
   if (el.id === 'ai-rate') { aiPrefsSet({ rate: el.value }); return; }
+  if (el.id === 'el-voice') { aiPrefsSet({ elVoice: el.value }); return; }
+  if (el.id === 'el-quality') { aiPrefsSet({ elQuality: el.value }); return; }
   if (el.dataset && el.dataset.psmap) return;
   if (isHH() && !/^(act-|pn-)/.test(el.id || '')) { render(); toast('Household is view only. Open a person to change this.'); return; }
   if (el.id === 'act-cat') { ui.actCat = el.value; ui.actShow = ACT_PAGE; render(); return; }
@@ -3816,7 +3877,7 @@ document.addEventListener('change', async e => {
 });
 document.addEventListener('toggle', e => { if (e.target.id === 'splitItems' && sheetCtx) sheetCtx.itemsOpen = e.target.open; else if (e.target.dataset && e.target.dataset.fold) ui.folds[e.target.dataset.fold] = e.target.open; }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('sheet').hidden) closeSheet(); else if (e.key === 'Enter' && e.target.id === 'askIn') { e.preventDefault(); const b = $('askSend'); if (b && !b.disabled) b.click(); } });
-try { speechSynthesis.onvoiceschanged = () => { if (sheetCtx && sheetCtx.kind === 'ai') openAiSheet(); }; } catch {}
+try { speechSynthesis.onvoiceschanged = () => { if (sheetCtx && sheetCtx.kind === 'ai' && aiPrefs().ttsEngine === 'iphone') openAiSheet(); }; } catch {}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) psSync(); else if (listening) try { rec.stop(); } catch {} });
 setInterval(() => { if (!document.hidden) psSync(); }, 60000);
 setTimeout(() => psSync(), 1500);

@@ -6,6 +6,7 @@ files=("$@")
 if [ ${#files[@]} -eq 0 ]; then mapfile -t files < <(git ls-files); fi
 patterns=(
   'sk-ant-[A-Za-z0-9_-]{20,}'                      # Anthropic API key
+  'sk_[0-9a-fA-F]{40,}'                            # ElevenLabs API key
   'sk-(proj-)?[A-Za-z0-9_-]{32,}'                  # OpenAI style key
   '\b[0-9a-fA-F]{60,}\b'                           # long hex: PocketSmith developer keys and similar
   '[Xx]-[Dd]eveloper-[Kk]ey["'"'"' :]+[A-Za-z0-9]{16,}'  # a PocketSmith key written next to its header
