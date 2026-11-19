@@ -3404,6 +3404,10 @@ const AI_TOOLS = [
   { name: 'set_category', description: 'Change the category of transactions in Lagoon by id. Only changes Lagoon records.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, category: { type: 'string' } }, required: ['ids', 'category'] } },
   { name: 'add_store_rule', description: 'Make a rule: stores whose name contains store_text go into category. apply_to_past also changes earlier matching transactions.', input_schema: { type: 'object', properties: { store_text: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] }, apply_to_past: { type: 'boolean' } }, required: ['store_text', 'category'] } },
   { name: 'set_budget', description: 'Set the monthly plan for a category.', input_schema: { type: 'object', properties: { category: { type: 'string' }, monthly_amount: { type: 'number' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['category', 'monthly_amount'] } },
+  { name: 'list_bills', description: 'List the recurring bills, subscriptions and regular income Lagoon counts in the forecast, with id, amount, how often and next date.', input_schema: { type: 'object', properties: {} } },
+  { name: 'remove_bills', description: 'Stop recurring bills or subscriptions so Lagoon no longer counts them. Pass ids from list_bills, or names. Past entries stay in history.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, names: { type: 'array', items: { type: 'string' } } } } },
+  { name: 'edit_bill', description: 'Change a recurring bill: amount, how often (weekly, fortnightly, 4weekly, monthly, quarterly, yearly), next date or end date.', input_schema: { type: 'object', properties: { id: { type: 'string' }, amount: { type: 'number' }, every: { type: 'string' }, next_date: { type: 'string' }, end_date: { type: 'string' } }, required: ['id'] } },
+  { name: 'add_bill', description: 'Add a recurring bill, subscription or regular income.', input_schema: { type: 'object', properties: { name: { type: 'string' }, amount: { type: 'number' }, every: { type: 'string' }, next_date: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['name', 'amount', 'every', 'next_date'] } },
   { name: 'mark_transfer', description: 'Mark transactions as transfers, or not, by id.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, is_transfer: { type: 'boolean' } }, required: ['ids', 'is_transfer'] } }
 ];
 const findCat = (name, type) => { const n = String(name || '').toLowerCase(), lists = type ? [[type, type === 'income' ? config.income : config.expense]] : [['expense', config.expense], ['income', config.income]]; for (const [t, l] of lists) { const c = l.find(x => x.name.toLowerCase() === n); if (c) return { type: t, name: c.name }; } return null; };
@@ -3450,12 +3454,33 @@ async function aiTool(name, a) {
       const item = (c.type === 'income' ? config.income : config.expense).find(x => x.name === c.name); item.planned = round2(Math.abs(+a.monthly_amount || 0));
       return { category: c.name, monthly_plan: item.planned };
     }
+    if (name === 'list_bills') { const now = isoDate(today()); return (config.recurring || []).map(r => ({ id: r.id, name: r.name, amount: +r.amount, every: r.freq, category: r.cat, type: r.type || 'expense', next: nextOccurrence(r, addDaysIso(now, -1)), ends: r.endDate || null })); }
+    if (name === 'remove_bills') {
+      const ids = new Set((a.ids || []).map(String)), names = (a.names || []).map(n => String(n).toLowerCase()).filter(Boolean);
+      const hit = (config.recurring || []).filter(r => ids.has(String(r.id)) || names.some(n => r.name.toLowerCase().includes(n) || n.includes(r.name.toLowerCase())));
+      if (!hit.length) return { error: 'No matching bills. Use list_bills for the ids.' };
+      const gone = new Set(hit); config.recurring = config.recurring.filter(r => !gone.has(r)); changed.add('__conf');
+      return { removed: hit.map(r => `${r.name} ${money(r.amount)} ${r.freq}`) };
+    }
+    if (name === 'edit_bill') {
+      const r = (config.recurring || []).find(x => String(x.id) === String(a.id)); if (!r) return { error: 'No bill with that id. Use list_bills.' };
+      if (a.amount != null) r.amount = round2(Math.abs(+a.amount)); if (a.every) r.freq = freqOf(a.every);
+      if (a.next_date && /^\d{4}-\d{2}-\d{2}$/.test(a.next_date)) { r.startDate = a.next_date; r.skip = []; }
+      if (a.end_date && /^\d{4}-\d{2}-\d{2}$/.test(a.end_date)) r.endDate = a.end_date;
+      changed.add('__conf'); return { bill: `${r.name} ${money(r.amount)} ${r.freq}`, next: nextOccurrence(r, addDaysIso(isoDate(today()), -1)) };
+    }
+    if (name === 'add_bill') {
+      const type = a.type === 'income' ? 'income' : 'expense', c = findCat(a.category || 'Other', type) || { name: type === 'income' ? 'Other' : 'Other' };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(a.next_date || '')) return { error: 'next_date must be YYYY-MM-DD.' };
+      const r = { id: uid(), name: String(a.name).trim(), amount: round2(Math.abs(+a.amount || 0)), cat: c.name, type, freq: freqOf(a.every), startDate: a.next_date, skip: [] };
+      config.recurring.push(r); changed.add('__conf'); return { added: `${r.name} ${money(r.amount)} ${r.freq} from ${r.startDate}` };
+    }
     if (name === 'mark_transfer') {
       const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean);
       for (const t of ts) { t.transfer = !!a.is_transfer; changed.add(t.date.slice(0, 7)); } return { changed: ts.length };
     }
     return { error: 'Unknown tool' };
-  } finally { if (changed.size || /set_budget|add_store_rule/.test(name)) { await saveMonths([...changed]); await saveConfig(); } }
+  } finally { if (changed.size || /set_budget|add_store_rule/.test(name)) { const ks = [...changed].filter(k => k !== '__conf'); if (ks.length) await saveMonths(ks); await saveConfig(); } }
 }
 function aiSystem() {
   const who = pname(curId), nm = isHH() ? 'the household' : (who && who !== 'Me' ? who : 'the user');
@@ -3464,11 +3489,11 @@ Stay on money: spending, budgets, bills, pay and commission, debts, savings, and
 Use the tools for real figures. Never guess a number. Say when data is missing.
 Reply style: lead with the answer in one line. Keep replies under 120 words unless asked for more. Short sentences, plain words, Australian spelling, no em dashes, no filler or compliments. Replies may be read aloud, so avoid tables, headings and long lists.
 Be honest. Disagree when a plan looks risky, and say why in one line.
-You cannot move money, pay, transfer, borrow or contact anyone. You can change Lagoon records only: categories, store rules, budgets and transfer flags. Say exactly what you changed. Ask before changing more than 20 transactions.
+You cannot move money, pay, transfer, borrow or contact anyone. You can change Lagoon records only: categories, store rules, budgets, transfer flags, and recurring bills and subscriptions (list, remove, edit, add). When Brad asks you to do something you have a tool for, do it straight away, then say what changed. Say exactly what you changed. Ask before changing more than 20 transactions.
 Snapshot now: ${JSON.stringify(aiSnapshot())}`;
 }
 async function aiCall(key, messages) {
-  const body = { model: aiModel(), max_tokens: 1024, system: aiSystem(), tools: AI_TOOLS, messages };
+  const body = { model: aiModel(), max_tokens: 2048, system: aiSystem(), tools: AI_TOOLS, messages };
   let r = await fetch(`${AI_API}/messages`, { method: 'POST', headers: aiHeaders(key), body: JSON.stringify(body) });
   if (r.status === 404 || r.status === 400) { const j = await r.clone().json().catch(() => ({})); if (/model/i.test(JSON.stringify(j))) { await aiModels(key); body.model = aiModel(); r = await fetch(`${AI_API}/messages`, { method: 'POST', headers: aiHeaders(key), body: JSON.stringify(body) }); } }
   if (r.status === 401 || r.status === 403) throw new Error('key');
@@ -3485,16 +3510,17 @@ async function aiAsk(text, spoken) {
   while (msgs.length && msgs[0].role !== 'user') msgs.shift();
   let reply = '', did = [];
   try {
-    for (let round = 0; round < 8; round++) {
+    for (let round = 0; round < 16; round++) {
+      if (round === 15) { const last = msgs[msgs.length - 1]; if (Array.isArray(last.content)) last.content.push({ type: 'text', text: 'Stop using tools now. In two sentences, tell Brad what you changed and what is left.' }); }
       const res = await aiCall(key, msgs), blocks = res.content || [];
       const txt = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-      if (res.stop_reason !== 'tool_use') { reply = txt; break; }
+      if (res.stop_reason !== 'tool_use' || round === 15) { reply = txt; break; }
       msgs.push({ role: 'assistant', content: blocks });
       const results = [];
-      for (const b of blocks.filter(b => b.type === 'tool_use')) { aiStatus = b.name === 'search_transactions' ? 'Looking through transactions…' : /set_|add_|mark_/.test(b.name) ? 'Updating Lagoon…' : 'Checking your numbers…'; askRefresh(true); const out = await aiTool(b.name, b.input || {}); if (/set_|add_|mark_/.test(b.name) && !out.error) did.push(b.name); results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) }); }
+      for (const b of blocks.filter(b => b.type === 'tool_use')) { aiStatus = b.name === 'search_transactions' ? 'Looking through transactions…' : /set_|add_|mark_|remove_|edit_/.test(b.name) ? 'Updating Lagoon…' : 'Checking your numbers…'; askRefresh(true); const out = await aiTool(b.name, b.input || {}); if (/set_|add_|mark_|remove_|edit_/.test(b.name) && !out.error) did.push(b.name); results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) }); }
       msgs.push({ role: 'user', content: results });
     }
-    if (!reply) reply = 'I could not finish that one. Try asking it a simpler way.';
+    if (!reply) reply = did.length ? `I made ${did.length} change${did.length === 1 ? '' : 's'} but did not get a summary back. Check Plan, Spending, Bills.` : 'I did not get an answer back from Claude. Try again.';
   } catch (err) {
     reply = err.message === 'key' ? 'Anthropic did not accept your key. Check it in assistant settings.' : err.message === 'busy' ? 'Claude is busy right now. Try again in a minute.' : /failed to fetch|network|load failed/i.test(err.message) ? 'No internet connection right now.' : `Something went wrong: ${err.message}`;
   }
