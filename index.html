@@ -3396,6 +3396,10 @@ function aiSnapshot() {
   };
 }
 const txOut = t => ({ id: t.id, date: t.date, store: t.desc, amount: +t.amount, type: t.type, category: t.cat, ...(isTransfer(t) ? { transfer: true } : {}), ...(t.pending ? { pending: true } : {}) });
+/* one step of undo for the assistant's changes: settings and every month, kept for this session */
+let aiUndo = null;
+function aiUndoSave() { aiUndo = { config: JSON.stringify(config), months: JSON.stringify(months) }; }
+function aiUndoRun() { if (!aiUndo) return null; const old = JSON.parse(aiUndo.months), keys = new Set([...Object.keys(old), ...Object.keys(months)]); config = JSON.parse(aiUndo.config); for (const k of Object.keys(months)) delete months[k]; Object.assign(months, old); aiUndo = null; return [...keys]; }
 const AI_TOOLS = [
   { name: 'search_transactions', description: 'Find transactions. Every word in query must appear in the store name or category. Transfers are left out unless include_transfers is true.', input_schema: { type: 'object', properties: { query: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income', 'any'] }, from: { type: 'string', description: 'YYYY-MM-DD' }, to: { type: 'string', description: 'YYYY-MM-DD' }, include_transfers: { type: 'boolean' }, min_amount: { type: 'number' }, max_amount: { type: 'number' }, limit: { type: 'integer' } } } },
   { name: 'spending_summary', description: 'Totals by category and top stores between two dates.', input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['from', 'to'] } },
@@ -3404,6 +3408,13 @@ const AI_TOOLS = [
   { name: 'set_category', description: 'Change the category of transactions in Lagoon by id. Only changes Lagoon records.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, category: { type: 'string' } }, required: ['ids', 'category'] } },
   { name: 'add_store_rule', description: 'Make a rule: stores whose name contains store_text go into category. apply_to_past also changes earlier matching transactions.', input_schema: { type: 'object', properties: { store_text: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] }, apply_to_past: { type: 'boolean' } }, required: ['store_text', 'category'] } },
   { name: 'set_budget', description: 'Set the monthly plan for a category.', input_schema: { type: 'object', properties: { category: { type: 'string' }, monthly_amount: { type: 'number' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['category', 'monthly_amount'] } },
+  { name: 'get_settings', description: 'Read any Lagoon setting. Sections: expense, income (categories with planned amounts), rules, itemRules, recurring, debts, goals, pots, accounts, pay, commissions, safety, startingBalance, startMonth, fcLiving, homeOrder, homeHidden, planOrder, watch, lenderSkip, skin, ps (bank sync). Leave section empty for a list of sections.', input_schema: { type: 'object', properties: { section: { type: 'string' } } } },
+  { name: 'set_setting', description: 'Change any Lagoon setting by path, for example "debts[2].rate", "pay.base", "expense[0].planned", "accounts.6357.kind", "startingBalance". value is any JSON value. Creates the path if missing.', input_schema: { type: 'object', properties: { path: { type: 'string' }, value: {} }, required: ['path', 'value'] } },
+  { name: 'delete_setting', description: 'Remove a Lagoon setting by path, for example "debts[3]", "goals[0]", "rules.e:uber eats help", "accounts.1138".', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+  { name: 'edit_transaction', description: 'Change a transaction by id: date (YYYY-MM-DD), amount, store, category, type (expense or income), pending, transfer.', input_schema: { type: 'object', properties: { id: { type: 'string' }, date: { type: 'string' }, amount: { type: 'number' }, store: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] }, pending: { type: 'boolean' }, transfer: { type: 'boolean' } }, required: ['id'] } },
+  { name: 'add_transaction', description: 'Add a transaction to Lagoon.', input_schema: { type: 'object', properties: { date: { type: 'string' }, amount: { type: 'number' }, store: { type: 'string' }, category: { type: 'string' }, type: { type: 'string', enum: ['expense', 'income'] } }, required: ['date', 'amount', 'store', 'category'] } },
+  { name: 'delete_transactions', description: 'Delete transactions by id. Bank-synced ones stay deleted on later syncs.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } } }, required: ['ids'] } },
+  { name: 'undo_last_change', description: 'Undo the most recent change the assistant made to settings or transactions.', input_schema: { type: 'object', properties: {} } },
   { name: 'list_bills', description: 'List the recurring bills, subscriptions and regular income Lagoon counts in the forecast, with id, amount, how often and next date.', input_schema: { type: 'object', properties: {} } },
   { name: 'remove_bills', description: 'Stop recurring bills or subscriptions so Lagoon no longer counts them. Pass ids from list_bills, or names. Past entries stay in history.', input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, names: { type: 'array', items: { type: 'string' } } } } },
   { name: 'edit_bill', description: 'Change a recurring bill: amount, how often (weekly, fortnightly, 4weekly, monthly, quarterly, yearly), next date or end date.', input_schema: { type: 'object', properties: { id: { type: 'string' }, amount: { type: 'number' }, every: { type: 'string' }, next_date: { type: 'string' }, end_date: { type: 'string' } }, required: ['id'] } },
@@ -3438,44 +3449,85 @@ async function aiTool(name, a) {
       return { cash_now: f.cash.v, lowest: f.low, lowest_on: f.lowDate, runs_out_on: f.neg ? f.neg.date : null, living_costs_in_period: round2(living), events: ev };
     }
     if (isHH()) return { error: 'Household view is read only. Open a person in Lagoon to make changes.' };
-    if (name === 'set_category') {
+    if (name === 'set_category') { aiUndoSave();
       const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean); if (!ts.length) return { error: 'No matching transaction ids.' };
       const c = findCat(a.category, ts[0].type); if (!c) return { error: `No ${ts[0].type} category called ${a.category}.` };
       const ok = ts.filter(t => t.type === c.type), r = setCats(ok, c.name); for (const k of r.touched) changed.add(k);
       return { changed: r.n, skipped_other_type: ts.length - ok.length };
     }
-    if (name === 'add_store_rule') {
+    if (name === 'add_store_rule') { aiUndoSave();
       const c = findCat(a.category, a.type); if (!c) return { error: `No category called ${a.category}.` };
       const r = addRule(a.store_text, c.type, c.name, !!a.apply_to_past); if (!r.key) return { error: 'store_text needs a word from the store name.' };
       for (const k of r.touched) changed.add(k); return { rule: `${r.key} -> ${c.name}`, changed_past: r.n };
     }
-    if (name === 'set_budget') {
+    if (name === 'set_budget') { aiUndoSave();
       const c = findCat(a.category, a.type); if (!c) return { error: `No category called ${a.category}.` };
       const item = (c.type === 'income' ? config.income : config.expense).find(x => x.name === c.name); item.planned = round2(Math.abs(+a.monthly_amount || 0));
       return { category: c.name, monthly_plan: item.planned };
     }
+    if (name === 'get_settings') {
+      if (!a.section) return { sections: Object.keys(config).filter(k => k !== 'v' && k !== 'mig') };
+      const v = config[a.section]; if (v === undefined) return { error: `No section ${a.section}.` };
+      return a.section === 'ps' ? { ...v, ignored: (v.ignored || []).length + ' deleted bank lines' } : v;
+    }
+    if (name === 'set_setting' || name === 'delete_setting') {
+      const parts = String(a.path || '').match(/[^.[\]]+/g) || []; if (!parts.length) return { error: 'Give a path.' };
+      if (['v', 'mig'].includes(parts[0])) return { error: 'That one is internal.' };
+      aiUndoSave();
+      let o = config; for (let k = 0; k < parts.length - 1; k++) { const p = parts[k], nx = parts[k + 1]; if (o[p] == null || typeof o[p] !== 'object') o[p] = /^\d+$/.test(nx) ? [] : {}; o = o[p]; }
+      const last = parts[parts.length - 1], before = o[last];
+      if (name === 'delete_setting') { if (Array.isArray(o) && /^\d+$/.test(last)) o.splice(+last, 1); else delete o[last]; }
+      else o[last] = a.value;
+      if (!Array.isArray(config.expense) || !Array.isArray(config.income) || !Array.isArray(config.recurring)) { aiUndoRun(); return { error: 'That change would break Lagoon, so I put it back.' }; }
+      changed.add('__conf'); return { path: a.path, before: before === undefined ? null : before, after: name === 'delete_setting' ? 'removed' : a.value };
+    }
+    if (name === 'edit_transaction') {
+      const t = byId.get(String(a.id)); if (!t) return { error: 'No transaction with that id.' };
+      aiUndoSave(); const k0 = t.date.slice(0, 7);
+      if (a.type) t.type = a.type;
+      if (a.category) { const c = findCat(a.category, t.type); if (!c) return { error: `No ${t.type} category called ${a.category}.` }; t.cat = c.name; t.catSet = true; }
+      if (a.amount != null) t.amount = round2(Math.abs(+a.amount));
+      if (a.store) t.desc = String(a.store).trim();
+      if (a.pending != null) { if (a.pending) t.pending = true; else delete t.pending; }
+      if (a.transfer != null) t.transfer = !!a.transfer;
+      if (a.date && /^\d{4}-\d{2}-\d{2}$/.test(a.date) && a.date !== t.date) { months[k0] = txOf(k0).filter(x => x !== t); t.date = a.date; (months[a.date.slice(0, 7)] = months[a.date.slice(0, 7)] || []).push(t); }
+      changed.add(k0); changed.add(t.date.slice(0, 7)); return { transaction: txOut(t) };
+    }
+    if (name === 'add_transaction') {
+      const type = a.type === 'income' ? 'income' : 'expense', c = findCat(a.category, type); if (!c) return { error: `No ${type} category called ${a.category}.` };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(a.date || '')) return { error: 'date must be YYYY-MM-DD.' };
+      aiUndoSave(); const t = { id: uid(), date: a.date, amount: round2(Math.abs(+a.amount || 0)), desc: String(a.store).trim(), cat: c.name, type, src: 'manual' };
+      (months[a.date.slice(0, 7)] = months[a.date.slice(0, 7)] || []).push(t); changed.add(a.date.slice(0, 7)); return { added: txOut(t) };
+    }
+    if (name === 'delete_transactions') {
+      const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean); if (!ts.length) return { error: 'No matching transaction ids.' };
+      aiUndoSave(); const pc = psConf();
+      for (const t of ts) { const k = t.date.slice(0, 7); months[k] = txOf(k).filter(x => x !== t); changed.add(k); if (t.ps) pc.ignored = [...(pc.ignored || []), t.ps].slice(-3000); }
+      changed.add('__conf'); return { deleted: ts.map(t => `${t.date} ${t.desc} ${money(t.amount)}`) };
+    }
+    if (name === 'undo_last_change') { const r = aiUndoRun(); if (!r) return { error: 'Nothing to undo.' }; for (const k of r) changed.add(k); changed.add('__conf'); return { undone: true }; }
     if (name === 'list_bills') { const now = isoDate(today()); return (config.recurring || []).map(r => ({ id: r.id, name: r.name, amount: +r.amount, every: r.freq, category: r.cat, type: r.type || 'expense', next: nextOccurrence(r, addDaysIso(now, -1)), ends: r.endDate || null })); }
-    if (name === 'remove_bills') {
+    if (name === 'remove_bills') { aiUndoSave();
       const ids = new Set((a.ids || []).map(String)), names = (a.names || []).map(n => String(n).toLowerCase()).filter(Boolean);
       const hit = (config.recurring || []).filter(r => ids.has(String(r.id)) || names.some(n => r.name.toLowerCase().includes(n) || n.includes(r.name.toLowerCase())));
       if (!hit.length) return { error: 'No matching bills. Use list_bills for the ids.' };
       const gone = new Set(hit); config.recurring = config.recurring.filter(r => !gone.has(r)); changed.add('__conf');
       return { removed: hit.map(r => `${r.name} ${money(r.amount)} ${r.freq}`) };
     }
-    if (name === 'edit_bill') {
+    if (name === 'edit_bill') { aiUndoSave();
       const r = (config.recurring || []).find(x => String(x.id) === String(a.id)); if (!r) return { error: 'No bill with that id. Use list_bills.' };
       if (a.amount != null) r.amount = round2(Math.abs(+a.amount)); if (a.every) r.freq = freqOf(a.every);
       if (a.next_date && /^\d{4}-\d{2}-\d{2}$/.test(a.next_date)) { r.startDate = a.next_date; r.skip = []; }
       if (a.end_date && /^\d{4}-\d{2}-\d{2}$/.test(a.end_date)) r.endDate = a.end_date;
       changed.add('__conf'); return { bill: `${r.name} ${money(r.amount)} ${r.freq}`, next: nextOccurrence(r, addDaysIso(isoDate(today()), -1)) };
     }
-    if (name === 'add_bill') {
+    if (name === 'add_bill') { aiUndoSave();
       const type = a.type === 'income' ? 'income' : 'expense', c = findCat(a.category || 'Other', type) || { name: type === 'income' ? 'Other' : 'Other' };
       if (!/^\d{4}-\d{2}-\d{2}$/.test(a.next_date || '')) return { error: 'next_date must be YYYY-MM-DD.' };
       const r = { id: uid(), name: String(a.name).trim(), amount: round2(Math.abs(+a.amount || 0)), cat: c.name, type, freq: freqOf(a.every), startDate: a.next_date, skip: [] };
       config.recurring.push(r); changed.add('__conf'); return { added: `${r.name} ${money(r.amount)} ${r.freq} from ${r.startDate}` };
     }
-    if (name === 'mark_transfer') {
+    if (name === 'mark_transfer') { aiUndoSave();
       const ts = (a.ids || []).map(id => byId.get(String(id))).filter(Boolean);
       for (const t of ts) { t.transfer = !!a.is_transfer; changed.add(t.date.slice(0, 7)); } return { changed: ts.length };
     }
@@ -3489,7 +3541,7 @@ Stay on money: spending, budgets, bills, pay and commission, debts, savings, and
 Use the tools for real figures. Never guess a number. Say when data is missing.
 Reply style: lead with the answer in one line. Keep replies under 120 words unless asked for more. Short sentences, plain words, Australian spelling, no em dashes, no filler or compliments. Replies may be read aloud, so avoid tables, headings and long lists.
 Be honest. Disagree when a plan looks risky, and say why in one line.
-You cannot move money, pay, transfer, borrow or contact anyone. You can change Lagoon records only: categories, store rules, budgets, transfer flags, and recurring bills and subscriptions (list, remove, edit, add). When Brad asks you to do something you have a tool for, do it straight away, then say what changed. Say exactly what you changed. Ask before changing more than 20 transactions.
+You cannot move money, pay, transfer, borrow or contact anyone. You can read and change anything inside Lagoon: every setting (get_settings, set_setting, delete_setting), every transaction (edit, add, delete), categories, store rules, budgets, transfer flags, and recurring bills. Read a setting before you change it. undo_last_change reverses your latest change. When Brad asks you to do something you have a tool for, do it straight away, then say what changed. Say exactly what you changed. Ask before changing more than 20 transactions.
 Snapshot now: ${JSON.stringify(aiSnapshot())}`;
 }
 async function aiCall(key, messages) {
@@ -3517,7 +3569,7 @@ async function aiAsk(text, spoken) {
       if (res.stop_reason !== 'tool_use' || round === 15) { reply = txt; break; }
       msgs.push({ role: 'assistant', content: blocks });
       const results = [];
-      for (const b of blocks.filter(b => b.type === 'tool_use')) { aiStatus = b.name === 'search_transactions' ? 'Looking through transactions…' : /set_|add_|mark_|remove_|edit_/.test(b.name) ? 'Updating Lagoon…' : 'Checking your numbers…'; askRefresh(true); const out = await aiTool(b.name, b.input || {}); if (/set_|add_|mark_|remove_|edit_/.test(b.name) && !out.error) did.push(b.name); results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) }); }
+      for (const b of blocks.filter(b => b.type === 'tool_use')) { aiStatus = b.name === 'search_transactions' ? 'Looking through transactions…' : /set_|add_|mark_|remove_|edit_|delete_|undo_/.test(b.name) ? 'Updating Lagoon…' : 'Checking your numbers…'; askRefresh(true); const out = await aiTool(b.name, b.input || {}); if (/set_|add_|mark_|remove_|edit_|delete_|undo_/.test(b.name) && !out.error) did.push(b.name); results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) }); }
       msgs.push({ role: 'user', content: results });
     }
     if (!reply) reply = did.length ? `I made ${did.length} change${did.length === 1 ? '' : 's'} but did not get a summary back. Check Plan, Spending, Bills.` : 'I did not get an answer back from Claude. Try again.';
